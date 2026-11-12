@@ -1,4 +1,11 @@
 __pycache__
 */__pycache__
 experiments_out
-configs/hydra/cluster.yaml
+configs/hydra/cluster.yamlout/
+err/
+wandb/
+outputs/
+*.pth
+*.ply
+.ipynb_checkpoints
+.DS_Store
