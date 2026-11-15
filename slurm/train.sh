@@ -28,6 +28,7 @@ conda activate splatter-image
 export PYTHONNOUSERSITE=1
 export SHAPENET_DATASET_ROOT=${SHAPENET_DATASET_ROOT:-$HOME/data/SRN}
 export WANDB_MODE=offline            # GPU nodes have no internet; sync later with `wandb sync`
+export SRN_CACHE_DIR=${SRN_CACHE_DIR:-$HOME/data/SRN_cache}   # one file per car, fills itself on first use
 export PYTHONUNBUFFERED=1            # show log lines immediately
 
 RUN=${RUN:-sym}

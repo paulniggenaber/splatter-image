@@ -18,6 +18,7 @@ conda activate splatter-image
 export PYTHONNOUSERSITE=1
 export SHAPENET_DATASET_ROOT=${SHAPENET_DATASET_ROOT:-$HOME/data/SRN}
 export WANDB_MODE=offline
+export SRN_CACHE_DIR=${SRN_CACHE_DIR:-$HOME/data/SRN_cache}   # one file per car, fills itself on first use
 export PYTHONUNBUFFERED=1            # show log lines immediately
 
 CKPT=${CKPT:-$HOME/ckpt/cars}
@@ -31,7 +32,9 @@ COMMON="+dataset=cars +experiment=lpips_100k opt.pretrained_ckpt=$CKPT opt.base_
     data.subset=24 opt.iterations=$STEPS \
     logging.val_log=100 logging.loop_log=100 logging.ckpt_iterations=100"
 
-for RUN in sym control; do
+# To test resuming: submit again with the same TAG and more STEPS, e.g.
+#   sbatch --export=ALL,TAG=<first job id>,STEPS=300,RUNS=sym slurm/smoke.sh
+for RUN in ${RUNS:-sym control}; do
     echo "=== smoke $RUN ==="; date
     if [ "$RUN" = "sym" ]; then
         # warm-up of 100 steps, so both the true-plane and the predicted-plane path run

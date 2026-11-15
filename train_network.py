@@ -94,7 +94,14 @@ def main(cfg: DictConfig):
                                                 strict=False)
                 print("Warning, model mismatch - was this expected?")
             first_iter = checkpoint["iteration"]
-            best_PSNR = checkpoint["best_PSNR"] 
+            best_PSNR = checkpoint["best_PSNR"]
+            # Also continue with the saved optimizer state. Without it Adam starts
+            # cold after every resubmitted job, which disturbs the weights for a while.
+            try:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                print("Restored the optimizer state")
+            except (KeyError, ValueError) as e:
+                print("Could not restore the optimizer state, starting it fresh:", e)
             print('Loaded model')
         # Resuming from checkpoint
         elif cfg.opt.pretrained_ckpt is not None:

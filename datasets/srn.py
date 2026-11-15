@@ -67,17 +67,35 @@ class SRNDataset(SharedDataset):
 
     def load_example_id(self, example_id, intrin_path,
                         trans = np.array([0.0, 0.0, 0.0]), scale=1.0):
-        dir_path = os.path.dirname(intrin_path)
-        rgb_paths = sorted(glob.glob(os.path.join(dir_path, "rgb", "*")))
-        pose_paths = sorted(glob.glob(os.path.join(dir_path, "pose", "*")))
-        assert len(rgb_paths) == len(pose_paths)
-
         if not hasattr(self, "all_rgbs"):
             self.all_rgbs = {}
             self.all_world_view_transforms = {}
             self.all_view_to_world_transforms = {}
             self.all_full_proj_transforms = {}
             self.all_camera_centers = {}
+
+        if example_id in self.all_rgbs.keys():
+            return      # already in RAM
+
+        # Optional disk cache: one file per object instead of ~100 (train) or ~500
+        # (val/test) small files. On a network drive, reading the small files takes
+        # about 3 s per object, i.e. hours for the whole training set at every job
+        # start. Set SRN_CACHE_DIR to switch it on; fill it once with
+        # `python -m datasets.cache_srn` (or it fills itself on first use).
+        cache_path = self._cache_path(example_id)
+        if cache_path is not None and os.path.isfile(cache_path):
+            cached = torch.load(cache_path)
+            self.all_rgbs[example_id] = cached["rgbs"].float() / 255.0     # exactly what PILtoTorch gives
+            self.all_world_view_transforms[example_id] = cached["world_view_transforms"]
+            self.all_view_to_world_transforms[example_id] = cached["view_to_world_transforms"]
+            self.all_full_proj_transforms[example_id] = cached["full_proj_transforms"]
+            self.all_camera_centers[example_id] = cached["camera_centers"]
+            return
+
+        dir_path = os.path.dirname(intrin_path)
+        rgb_paths = sorted(glob.glob(os.path.join(dir_path, "rgb", "*")))
+        pose_paths = sorted(glob.glob(os.path.join(dir_path, "pose", "*")))
+        assert len(rgb_paths) == len(pose_paths)
 
         if example_id not in self.all_rgbs.keys():
             self.all_rgbs[example_id] = []
@@ -111,6 +129,32 @@ class SRNDataset(SharedDataset):
             self.all_full_proj_transforms[example_id] = torch.stack(self.all_full_proj_transforms[example_id])
             self.all_camera_centers[example_id] = torch.stack(self.all_camera_centers[example_id])
             self.all_rgbs[example_id] = torch.stack(self.all_rgbs[example_id])
+
+            if cache_path is not None:
+                # images as bytes (4x smaller); k/255 -> k is exact, so nothing is lost
+                to_save = {
+                    "rgbs": (self.all_rgbs[example_id] * 255.0).round().to(torch.uint8),
+                    "world_view_transforms": self.all_world_view_transforms[example_id],
+                    "view_to_world_transforms": self.all_view_to_world_transforms[example_id],
+                    "full_proj_transforms": self.all_full_proj_transforms[example_id],
+                    "camera_centers": self.all_camera_centers[example_id],
+                }
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                tmp_path = cache_path + ".tmp{}".format(os.getpid())
+                torch.save(to_save, tmp_path)
+                os.replace(tmp_path, cache_path)     # atomic: never leaves a half-written file
+
+    def _cache_path(self, example_id):
+        cache_root = os.environ.get("SRN_CACHE_DIR")
+        if not cache_root:
+            return None
+        # resolution and camera settings are part of the folder name, so a different
+        # setting never picks up a stale cache
+        tag = "srn_{}_{}px_fov{:.3f}_z{}-{}".format(self.cfg.data.category,
+                                                   self.cfg.data.training_resolution,
+                                                   self.cfg.data.fov,
+                                                   self.cfg.data.znear, self.cfg.data.zfar)
+        return os.path.join(cache_root, tag, self.dataset_name, example_id + ".pt")
 
     def get_example_id(self, index):
         intrin_path = self.intrins[index]
