@@ -11,8 +11,11 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix, getView2Wo
 
 from .shared_dataset import SharedDataset
 
-SHAPENET_DATASET_ROOT = None # Change this to your data directory
-assert SHAPENET_DATASET_ROOT is not None, "Update the location of the SRN Shapenet Dataset"
+# Data directory = the parent folder of srn_cars/ (and srn_chairs/).
+# Read from the environment so that every team member can use their own path:
+#   export SHAPENET_DATASET_ROOT=$HOME/data/SRN
+SHAPENET_DATASET_ROOT = os.environ.get("SHAPENET_DATASET_ROOT")
+assert SHAPENET_DATASET_ROOT is not None, "Set the SHAPENET_DATASET_ROOT environment variable to the SRN Shapenet data folder"
 
 class SRNDataset(SharedDataset):
     def __init__(self, cfg,
