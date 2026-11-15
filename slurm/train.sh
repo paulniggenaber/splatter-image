@@ -28,6 +28,7 @@ conda activate splatter-image
 export PYTHONNOUSERSITE=1
 export SHAPENET_DATASET_ROOT=${SHAPENET_DATASET_ROOT:-$HOME/data/SRN}
 export WANDB_MODE=offline            # GPU nodes have no internet; sync later with `wandb sync`
+export PYTHONUNBUFFERED=1            # show log lines immediately
 
 RUN=${RUN:-sym}
 CKPT=${CKPT:-$HOME/ckpt/cars}        # folder that contains model_latest.pth (released cars model)
@@ -53,5 +54,7 @@ python train_network.py +dataset=cars +experiment=lpips_100k \
     opt.base_lr=0.00005 \
     $SYM \
     hydra.run.dir=$RUN_DIR \
-    $EXTRA
+    $EXTRA \
+    | grep --line-buffered -v "starting iteration\|finished forward\|finished opt\|finished iteration"
+echo "exit code of training: ${PIPESTATUS[0]}"
 date

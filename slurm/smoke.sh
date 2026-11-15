@@ -18,6 +18,7 @@ conda activate splatter-image
 export PYTHONNOUSERSITE=1
 export SHAPENET_DATASET_ROOT=${SHAPENET_DATASET_ROOT:-$HOME/data/SRN}
 export WANDB_MODE=offline
+export PYTHONUNBUFFERED=1            # show log lines immediately
 
 CKPT=${CKPT:-$HOME/ckpt/cars}
 STEPS=${STEPS:-200}
@@ -39,7 +40,7 @@ for RUN in sym control; do
         SYM="model.symmetry.enabled=false"
     fi
     python train_network.py $COMMON $SYM hydra.run.dir=$PWD/experiments_out/smoke_${TAG}_$RUN \
-        | grep -v "starting iteration\|finished forward\|finished opt\|finished iteration"
+        | grep --line-buffered -v "starting iteration\|finished forward\|finished opt\|finished iteration"
     echo "exit code of $RUN: ${PIPESTATUS[0]}"
     ls -la experiments_out/smoke_${TAG}_$RUN/ | grep -v "^total"
 done
