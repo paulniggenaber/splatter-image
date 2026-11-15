@@ -64,7 +64,7 @@ def reflect_quaternions(q, n):
     return quaternion_raw_multiply(quaternion_raw_multiply(q_n, q), q_x)
 
 
-def mirror_gaussians(g, plane, switch, transform_SHs):
+def mirror_gaussians(g, plane, switch, transform_SHs, twin_dc_delta=None):
     """
     Append a mirrored twin for every Gaussian.
 
@@ -75,6 +75,10 @@ def mirror_gaussians(g, plane, switch, transform_SHs):
     transform_SHs: GaussianSplatPredictor.transform_SHs. It applies a 3x3
        matrix to the degree-1 colour coefficients. They behave like a vector,
        so the reflection matrix H can be used in place of a rotation.
+    twin_dc_delta: optional (B, N, 1, 3), added to the twin's base colour.
+       The shape of an object is symmetric, the lighting is not: in SRN the
+       light comes from one side, so the hidden side is brighter or darker
+       than the visible one. This lets the model correct the twin's colour.
 
     Returns a dict with the same keys and 2N Gaussians: originals, then twins.
     """
@@ -85,7 +89,7 @@ def mirror_gaussians(g, plane, switch, transform_SHs):
         "rotation": reflect_quaternions(g["rotation"], n),
         "scaling": g["scaling"],
         "opacity": g["opacity"] * switch,
-        "features_dc": g["features_dc"],
+        "features_dc": g["features_dc"] if twin_dc_delta is None else g["features_dc"] + twin_dc_delta,
     }
     if g["features_rest"].shape[2] > 0:
         twin["features_rest"] = transform_SHs(g["features_rest"], reflection_matrix(n))
