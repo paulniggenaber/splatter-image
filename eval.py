@@ -18,6 +18,10 @@ from gaussian_renderer import render_predicted
 from scene.gaussian_predictor import GaussianSplatPredictor
 from datasets.dataset_factory import get_dataset
 from utils.loss_utils import ssim as ssim_fn
+from scene.symmetry import symmetrize_posthoc, is_hidden_side_camera
+
+def _mean(values):
+    return sum(values) / len(values) if len(values) > 0 else float("nan")
 
 class Metricator():
     def __init__(self, device):
@@ -29,13 +33,27 @@ class Metricator():
         return psnr, ssim, lpips
 
 @torch.no_grad()
-def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folder=None
-                     ):
+def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folder=None,
+                     sym_mode="model", per_view_path=None):
     """
-    Runs evaluation on the dataset passed in the dataloader. 
+    Runs evaluation on the dataset passed in the dataloader.
     Computes, prints and saves PSNR, SSIM, LPIPS.
     Args:
         save_vis: how many examples will have visualisations saved
+        sym_mode: how symmetry is used (needs "sym_plane" in the data, i.e. SRN):
+            "model"        the model as it is (default). A symmetry model mirrors
+                           with its own predicted plane.
+            "oracle"       a symmetry model mirrors with the TRUE plane.
+            "oracle_on"    as "oracle", and the switch is forced to 1.
+            "twin_all"     training-free: every Gaussian of any model gets a twin
+                           across the TRUE plane.
+            "replace_far"  training-free: keep the Gaussians on the camera's side
+                           of the TRUE plane, build the other half by mirroring.
+        per_view_path: if set, mean PSNR per view index is written to this file.
+
+    If the data has "sym_plane", scores are also reported separately for
+    near-side views (camera on the same side of the mirror plane as the input
+    camera) and hidden-side views (camera on the other side).
     """
 
     if save_vis > 0:
@@ -59,7 +77,13 @@ def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folde
     ssim_all_examples_cond = []
     lpips_all_examples_cond = []
 
+    # symmetry extension: near-side / hidden-side scores, per-view PSNR
+    side_examples = {side: {"psnr": [], "ssim": [], "lpips": []} for side in ["near", "hidden"]}
+    per_view_psnr_sum = None
+    per_view_count = None
+
     for d_idx, data in enumerate(tqdm.tqdm(dataloader)):
+        side_renders = {side: {"psnr": [], "ssim": [], "lpips": []} for side in ["near", "hidden"]}
         psnr_all_renders_novel = []
         ssim_all_renders_novel = []
         lpips_all_renders_novel = []
@@ -93,10 +117,24 @@ def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folde
             os.makedirs(out_example, exist_ok=True)
 
         # batch has length 1, the first image is conditioning
+        sym_plane_gt = data.get("sym_plane", None)      # (1, 4) true mirror plane, SRN only
+        model_kwargs = {}
+        if sym_mode in ["oracle", "oracle_on"]:
+            model_kwargs["sym_plane_override"] = sym_plane_gt
+        if sym_mode == "oracle_on":
+            model_kwargs["sym_switch_override"] = 1.0
         reconstruction = model(input_images,
                                data["view_to_world_transforms"][:, :model_cfg.data.input_images, ...],
                                rot_transform_quats,
-                               focals_pixels_pred)
+                               focals_pixels_pred,
+                               **model_kwargs)
+        if sym_mode in ["twin_all", "replace_far"]:
+            reconstruction = symmetrize_posthoc(reconstruction, sym_plane_gt, sym_mode,
+                                                model.transform_SHs)
+
+        if per_view_psnr_sum is None:
+            per_view_psnr_sum = [0.0] * data["gt_images"].shape[1]
+            per_view_count = [0] * data["gt_images"].shape[1]
 
         for r_idx in range( data["gt_images"].shape[1]):
             if "focals_pixels" in data.keys():
@@ -127,6 +165,20 @@ def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folde
                     psnr_all_renders_novel.append(psnr)
                     ssim_all_renders_novel.append(ssim)
                     lpips_all_renders_novel.append(lpips)
+                    if sym_plane_gt is not None:
+                        hidden = is_hidden_side_camera(data["camera_centers"][0, r_idx], sym_plane_gt[0])
+                        side = "hidden" if hidden else "near"
+                        side_renders[side]["psnr"].append(psnr)
+                        side_renders[side]["ssim"].append(ssim)
+                        side_renders[side]["lpips"].append(lpips)
+                if r_idx < len(per_view_psnr_sum):
+                    per_view_psnr_sum[r_idx] += psnr
+                    per_view_count[r_idx] += 1
+
+        for side in ["near", "hidden"]:
+            for metric in ["psnr", "ssim", "lpips"]:
+                if len(side_renders[side][metric]) > 0:
+                    side_examples[side][metric].append(_mean(side_renders[side][metric]))
 
         psnr_all_examples_cond.append(sum(psnr_all_renders_cond) / len(psnr_all_renders_cond))
         ssim_all_examples_cond.append(sum(ssim_all_renders_cond) / len(ssim_all_renders_cond))
@@ -148,6 +200,20 @@ def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folde
               "PSNR_novel": sum(psnr_all_examples_novel) / len(psnr_all_examples_novel),
               "SSIM_novel": sum(ssim_all_examples_novel) / len(ssim_all_examples_novel),
               "LPIPS_novel": sum(lpips_all_examples_novel) / len(lpips_all_examples_novel)}
+
+    for side in ["near", "hidden"]:
+        if len(side_examples[side]["psnr"]) > 0:
+            scores["PSNR_" + side] = _mean(side_examples[side]["psnr"])
+            scores["SSIM_" + side] = _mean(side_examples[side]["ssim"])
+            scores["LPIPS_" + side] = _mean(side_examples[side]["lpips"])
+
+    if per_view_path is not None and per_view_psnr_sum is not None:
+        with open(per_view_path, "w+") as f:
+            f.write("# view_index_in_batch mean_PSNR n_objects   (index 0 = input view)\n")
+            for r_idx in range(len(per_view_psnr_sum)):
+                if per_view_count[r_idx] > 0:
+                    f.write("{} {} {}\n".format(r_idx, per_view_psnr_sum[r_idx] / per_view_count[r_idx],
+                                                per_view_count[r_idx]))
 
     return scores
 
@@ -279,12 +345,16 @@ def main(dataset_name, experiment_path, device_idx, split='test', save_vis=0, ou
     # override dataset in cfg if testing objaverse model
     if training_cfg.data.category == "objaverse" and split in ["test", "vis"]:
         training_cfg.data.category = "gso"
+    # optionally evaluate on the first N objects only (quick checks)
+    if args.max_examples is not None:
+        training_cfg.data.subset = args.max_examples
     # instantiate dataset loader
     dataset = get_dataset(training_cfg, split)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False,
                             persistent_workers=True, pin_memory=True, num_workers=1)
-    
-    scores = evaluate_dataset(model, dataloader, device, training_cfg, save_vis=save_vis, out_folder=out_folder)
+
+    scores = evaluate_dataset(model, dataloader, device, training_cfg, save_vis=save_vis, out_folder=out_folder,
+                              sym_mode=args.sym_mode, per_view_path=args.per_view_path)
     if split != 'vis':
         print(scores)
     return scores
@@ -302,6 +372,15 @@ def parse_arguments():
                         You can also use this to evaluate on the training or validation splits.')
     parser.add_argument('--out_folder', type=str, default='out', help='Output folder to save renders (default: out)')
     parser.add_argument('--save_vis', type=int, default=0, help='Number of examples for which to save renders (default: 0)')
+    parser.add_argument('--sym_mode', type=str, default='model',
+                        choices=['model', 'oracle', 'oracle_on', 'twin_all', 'replace_far'],
+                        help='How symmetry is used, see evaluate_dataset (default: model = the model as it is)')
+    parser.add_argument('--max_examples', type=int, default=None,
+                        help='Evaluate only the first N objects (default: all)')
+    parser.add_argument('--per_view_path', type=str, default=None,
+                        help='If set, write the mean PSNR per view index to this file')
+    parser.add_argument('--scores_path', type=str, default=None,
+                        help='Where to write the scores json (default: the original locations)')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -326,8 +405,10 @@ if __name__ == "__main__":
     scores = main(dataset_name, experiment_path, 0, split=split, save_vis=save_vis, out_folder=out_folder)
     # save scores to json in the experiment folder if appropriate split was used
     if split != "vis":
-        if experiment_path is not None:
-            score_out_path = os.path.join(experiment_path, 
+        if args.scores_path is not None:
+            score_out_path = args.scores_path
+        elif experiment_path is not None:
+            score_out_path = os.path.join(experiment_path,
                                    "{}_scores.json".format(split))
         else:
             score_out_path = "{}_{}_scores.json".format(dataset_name, split)

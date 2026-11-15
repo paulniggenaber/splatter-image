@@ -1,6 +1,7 @@
 import glob
 import hydra
 import os
+import time
 import wandb
 
 import numpy as np
@@ -18,7 +19,8 @@ import lpips as lpips_lib
 
 from eval import evaluate_dataset
 from gaussian_renderer import render_predicted
-from scene.gaussian_predictor import GaussianSplatPredictor
+from scene.gaussian_predictor import GaussianSplatPredictor, symmetry_enabled
+from scene.symmetry import plane_loss, plane_errors
 from datasets.dataset_factory import get_dataset
 
 
@@ -58,9 +60,20 @@ def main(cfg: DictConfig):
     gaussian_predictor = GaussianSplatPredictor(cfg)
     gaussian_predictor = gaussian_predictor.to(memory_format=torch.channels_last)
 
+    use_symmetry = symmetry_enabled(cfg)
+
     l = []
-    if cfg.model.network_with_offset:
-        l.append({'params': gaussian_predictor.network_with_offset.parameters(), 
+    if cfg.model.network_with_offset and use_symmetry:
+        # The two symmetry heads start from scratch, so they get their own
+        # (higher) learning rate. Everything else trains at base_lr.
+        is_head = lambda n: n.startswith("sym_head") or n.startswith("plane_head")
+        named = list(gaussian_predictor.network_with_offset.named_parameters())
+        l.append({'params': [p for n, p in named if not is_head(n)],
+         'lr': cfg.opt.base_lr})
+        l.append({'params': [p for n, p in named if is_head(n)],
+         'lr': cfg.opt.sym_lr})
+    elif cfg.model.network_with_offset:
+        l.append({'params': gaussian_predictor.network_with_offset.parameters(),
          'lr': cfg.opt.base_lr})
     if cfg.model.network_without_offset:
         l.append({'params': gaussian_predictor.network_wo_offset.parameters(), 
@@ -93,7 +106,9 @@ def main(cfg: DictConfig):
             except RuntimeError:
                 gaussian_predictor.load_state_dict(checkpoint["model_state_dict"],
                                                 strict=False)
-            best_PSNR = checkpoint["best_PSNR"] 
+            best_PSNR = checkpoint.get("best_PSNR", 0.0)
+            if cfg.opt.get("reset_best_psnr", True):
+                best_PSNR = 0.0
             print('Loaded model from a pretrained checkpoint')
         else:
             best_PSNR = 0.0
@@ -157,6 +172,7 @@ def main(cfg: DictConfig):
     print("Beginning training")
     first_iter += 1
     iteration = first_iter
+    last_log_time = None
 
     for num_epoch in range((cfg.opt.iterations + 1 - first_iter)// len(dataloader) + 1):
         dataloader.sampler.set_epoch(num_epoch)        
@@ -178,10 +194,17 @@ def main(cfg: DictConfig):
                 focals_pixels_pred = None
                 input_images = data["gt_images"][:, :cfg.data.input_images, ...]
 
+            sym_kwargs = {}
+            if use_symmetry and iteration <= cfg.model.symmetry.gt_plane_iters:
+                # warm-up: mirror with the TRUE plane, so the twins are correct from
+                # step one while the plane head learns from the plane loss alone
+                sym_kwargs["sym_plane_override"] = data["sym_plane"]
+
             gaussian_splats = gaussian_predictor(input_images,
                                                 data["view_to_world_transforms"][:, :cfg.data.input_images, ...],
                                                 rot_transform_quats,
-                                                focals_pixels_pred)
+                                                focals_pixels_pred,
+                                                **sym_kwargs)
 
 
             if cfg.data.category == "hydrants" or cfg.data.category == "teddybears":
@@ -240,6 +263,11 @@ def main(cfg: DictConfig):
             if cfg.data.category == "hydrants" or cfg.data.category == "teddybears":
                 total_loss = total_loss + big_gaussian_reg_loss + small_gaussian_reg_loss
 
+            if use_symmetry:
+                # teach the plane head where the true mirror plane is
+                plane_loss_value = plane_loss(gaussian_splats["sym_plane"], data["sym_plane"])
+                total_loss = total_loss + cfg.opt.lambda_plane * plane_loss_value
+
             assert not total_loss.isnan(), "Found NaN loss!"
             print("finished forward {} on process {}".format(iteration, fabric.global_rank))
             fabric.backward(total_loss)
@@ -258,8 +286,32 @@ def main(cfg: DictConfig):
 
             # ========= Logging =============
             with torch.no_grad():
+                if iteration % 50 == 0 and fabric.is_global_zero:
+                    # one compact line every 50 steps: loss and speed
+                    now = time.time()
+                    msg = "[it {}] loss {:.5f} l12 {:.5f}".format(iteration, total_loss.item(), l12_loss_sum.item())
+                    if last_log_time is not None:
+                        msg += " | {:.3f} s/it".format((now - last_log_time) / 50)
+                    if torch.cuda.is_available():
+                        msg += " | GPU mem {:.1f} GB".format(torch.cuda.max_memory_allocated() / 1e9)
+                    if use_symmetry:
+                        angle_err, offset_err = plane_errors(gaussian_splats["sym_plane"], data["sym_plane"])
+                        msg += " | plane loss {:.4f} angle err {:.1f} deg offset err {:.3f} | switch mean {:.3f}".format(
+                            plane_loss_value.item(), angle_err, offset_err,
+                            gaussian_splats["sym_switch"].mean().item())
+                    print(msg, flush=True)
+                    last_log_time = now
+
                 if iteration % cfg.logging.loss_log == 0 and fabric.is_global_zero:
                     wandb.log({"training_loss": np.log10(total_loss.item() + 1e-8)}, step=iteration)
+                    if use_symmetry:
+                        angle_err, offset_err = plane_errors(gaussian_splats["sym_plane"], data["sym_plane"])
+                        wandb.log({"sym_plane_loss": plane_loss_value.item(),
+                                   "sym_plane_angle_err_deg": angle_err,
+                                   "sym_plane_offset_err": offset_err,
+                                   "sym_switch_mean": gaussian_splats["sym_switch"].mean().item(),
+                                   "sym_uses_true_plane": float("sym_plane_override" in sym_kwargs)},
+                                  step=iteration)
                     if cfg.opt.lambda_lpips != 0:
                         wandb.log({"training_l12_loss": np.log10(l12_loss_sum.item() + 1e-8)}, step=iteration)
                         wandb.log({"training_lpips_loss": np.log10(lpips_loss_sum.item() + 1e-8)}, step=iteration)

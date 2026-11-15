@@ -10,6 +10,7 @@ from einops import rearrange, repeat
 
 from utils.general_utils import matrix_to_quaternion, quaternion_raw_multiply
 from utils.graphics_utils import fov2focal
+from scene.symmetry import mirror_gaussians
 
 # U-Net implementation from EDM
 # Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -378,7 +379,9 @@ class SongUNet(nn.Module):
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, init_weight=0.2, **init)# init_zero)
 
-    def forward(self, x, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, film_camera_emb=None, N_views_xa=1, return_features=False):
+        # return_features=True also returns the last decoder feature map
+        # (B, model_channels, H, W). Used by the symmetry heads.
 
         emb = None
 
@@ -423,6 +426,8 @@ class SongUNet(nn.Module):
                     # but it's not good for gradient flow and background features
                     x = torch.cat([x, skips.pop()], dim=1)
                 x = block(x, emb=emb, N_views_xa=N_views_xa)
+        if return_features:
+            return aux, x
         return aux
 
 # ================== End of implementation taken from EDM ===============
@@ -461,12 +466,40 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
-    def forward(self, x, film_camera_emb=None, N_views_xa=1):
-        x = self.encoder(x, 
-                         film_camera_emb=film_camera_emb,
-                         N_views_xa=N_views_xa)
+        # ---- Symmetry extension: two small extra heads -------------------
+        # They read the last decoder feature map (base_dim channels), not the
+        # 24 output channels, so the pretrained layers keep their shapes and
+        # the released weights still load (the heads are simply "missing keys").
+        self.symmetry = symmetry_enabled(cfg)
+        if self.symmetry:
+            # switch: one number per pixel = "does the twin of this Gaussian exist?"
+            self.sym_head = nn.Conv2d(cfg.model.base_dim, 1, kernel_size=1)
+            nn.init.zeros_(self.sym_head.weight)
+            nn.init.constant_(self.sym_head.bias, cfg.model.symmetry.switch_bias)
+            # plane: 4 numbers per image (normal, offset), from averaged features
+            self.plane_head = nn.Sequential(nn.Linear(cfg.model.base_dim, 64),
+                                            nn.SiLU(),
+                                            nn.Linear(64, 4))
 
-        return self.out(x)
+    def forward(self, x, film_camera_emb=None, N_views_xa=1):
+        if not self.symmetry:
+            x = self.encoder(x,
+                             film_camera_emb=film_camera_emb,
+                             N_views_xa=N_views_xa)
+            return self.out(x)
+
+        x, feat = self.encoder(x,
+                               film_camera_emb=film_camera_emb,
+                               N_views_xa=N_views_xa,
+                               return_features=True)
+        sym_logit = self.sym_head(feat)                    # (B, 1, H, W)
+        plane = self.plane_head(feat.mean(dim=(2, 3)))     # (B, 4)
+        return self.out(x), sym_logit, plane
+
+def symmetry_enabled(cfg):
+    # Configs of the released models have no model.symmetry entry -> off.
+    sym_cfg = cfg.model.get("symmetry", None)
+    return sym_cfg is not None and bool(sym_cfg.enabled)
 
 def networkCallBack(cfg, name, out_channels, **kwargs):
     if name == "SingleUNet":
@@ -478,6 +511,7 @@ class GaussianSplatPredictor(nn.Module):
     def __init__(self, cfg):
         super(GaussianSplatPredictor, self).__init__()
         self.cfg = cfg
+        self.symmetry = symmetry_enabled(cfg)
         assert cfg.model.network_with_offset or cfg.model.network_without_offset, \
             "Need at least one network"
 
@@ -686,7 +720,12 @@ class GaussianSplatPredictor(nn.Module):
                 source_cameras_view_to_world, 
                 source_cv2wT_quat=None,
                 focals_pixels=None,
-                activate_output=True):
+                activate_output=True,
+                sym_plane_override=None,
+                sym_switch_override=None):
+        # sym_plane_override (B, 4): mirror with this plane instead of the predicted
+        #   one (true plane during warm-up, or "oracle plane" evaluation).
+        # sym_switch_override (float): force the switch to this value (tests).
 
         B = x.shape[0]
         N_views = x.shape[1]
@@ -725,6 +764,8 @@ class GaussianSplatPredictor(nn.Module):
                                                              film_camera_emb=film_camera_emb,
                                                              N_views_xa=N_views_xa
                                                              )
+            if self.symmetry:
+                split_network_outputs, sym_logit, sym_plane_pred = split_network_outputs
 
             split_network_outputs = split_network_outputs.split(self.split_dimensions_with_offset, dim=1)
             depth, offset, opacity, scaling, rotation, features_dc = split_network_outputs[:6]
@@ -791,6 +832,21 @@ class GaussianSplatPredictor(nn.Module):
                                                      3), dtype=out_dict["features_dc"].dtype, device="cuda")
 
         out_dict = self.multi_view_union(out_dict, B, N_views)
+
+        if self.symmetry:
+            # Symmetry extension: add a mirrored twin for every Gaussian (N -> 2N).
+            # With one input view the Gaussians are in the frame of the input
+            # camera, and so is the mirror plane.
+            assert N_views == 1, "Symmetry is implemented for one input view"
+            assert activate_output, "Symmetry needs activated opacities"
+            switch = torch.sigmoid(self.flatten_vector(sym_logit))        # (B, N, 1)
+            if sym_switch_override is not None:
+                switch = torch.full_like(switch, float(sym_switch_override))
+            plane_used = sym_plane_pred if sym_plane_override is None else sym_plane_override
+            out_dict = mirror_gaussians(out_dict, plane_used, switch, self.transform_SHs)
+            out_dict["sym_plane"] = sym_plane_pred       # (B, 4), for the plane loss
+            out_dict["sym_switch"] = switch              # (B, N, 1), for logging / pictures
+
         out_dict = self.make_contiguous(out_dict)
 
         return out_dict

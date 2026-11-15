@@ -1,17 +1,19 @@
-from .srn import SRNDataset
-from .co3d import CO3DDataset
-from .nmr import NMRDataset
-from .objaverse import ObjaverseDataset
-from .gso import GSODataset
+# Each dataset module asserts at import time that its data path is set.
+# Importing lazily means only the dataset you actually use needs its path.
 
 def get_dataset(cfg, name):
     if cfg.data.category == "cars" or cfg.data.category == "chairs":
+        from .srn import SRNDataset
         return SRNDataset(cfg, name)
     elif cfg.data.category == "hydrants" or cfg.data.category == "teddybears":
+        from .co3d import CO3DDataset
         return CO3DDataset(cfg, name)
     elif cfg.data.category == "nmr":
+        from .nmr import NMRDataset
         return NMRDataset(cfg, name)
     elif cfg.data.category == "objaverse":
+        from .objaverse import ObjaverseDataset
         return ObjaverseDataset(cfg, name)
     elif cfg.data.category == "gso":
+        from .gso import GSODataset
         return GSODataset(cfg, name)

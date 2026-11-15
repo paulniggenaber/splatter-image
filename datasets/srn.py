@@ -143,7 +143,27 @@ class SRNDataset(SharedDataset):
             "camera_centers": self.all_camera_centers[example_id][frame_idxs]
         }
 
+        # True mirror plane of the object, expressed in the frame of the input camera.
+        # SRN cars and chairs are stored aligned: the mirror plane is x = 0 in dataset
+        # coordinates (checked on the data: camera on the x axis sees the car side-on).
+        # The plane is all points p with n . p = d. Must be computed BEFORE the poses
+        # are made relative to the first (input) camera.
+        wvt0 = images_and_camera_poses["world_view_transforms"][0]   # world -> input camera, row-major
+        sym_n = wvt0[0, :3].clone()                                  # dataset x axis seen from the input camera
+        sym_d = (sym_n * wvt0[3, :3]).sum()                          # wvt0[3, :3] = object centre in camera coords
+        sym_plane = torch.cat([sym_n, sym_d[None]]).float()          # (4,)
+
         images_and_camera_poses = self.make_poses_relative_to_first(images_and_camera_poses)
         images_and_camera_poses["source_cv2wT_quat"] = self.get_source_cw2wT(images_and_camera_poses["view_to_world_transforms"])
+        images_and_camera_poses["sym_plane"] = sym_plane
+
+        if self.dataset_name == "test":
+            # Testing visits every object exactly once, so keeping all 251 views of
+            # all objects cached only fills the RAM (704 test cars = ~35 GB).
+            # (train and val are visited many times, so they stay cached.)
+            for cache in [self.all_rgbs, self.all_world_view_transforms,
+                          self.all_view_to_world_transforms, self.all_full_proj_transforms,
+                          self.all_camera_centers]:
+                del cache[example_id]
 
         return images_and_camera_poses

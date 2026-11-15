@@ -38,7 +38,7 @@ def render_predicted(pc : dict,
         tanfovy = math.tan(0.5 * focal2fov(focals_pixels[1].item(), cfg.data.training_resolution))
 
     # Set up rasterization configuration
-    raster_settings = GaussianRasterizationSettings(
+    raster_kwargs = dict(
         image_height=int(cfg.data.training_resolution),
         image_width=int(cfg.data.training_resolution),
         tanfovx=tanfovx,
@@ -52,6 +52,11 @@ def render_predicted(pc : dict,
         prefiltered=False,
         debug=False
     )
+    # Newer versions of the rasterizer (2024+) have an extra "antialiasing"
+    # setting. Switch it off, so the result matches the version the paper used.
+    if "antialiasing" in GaussianRasterizationSettings._fields:
+        raster_kwargs["antialiasing"] = False
+    raster_settings = GaussianRasterizationSettings(**raster_kwargs)
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
 
@@ -81,7 +86,8 @@ def render_predicted(pc : dict,
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    # (newer rasterizer versions return a third value, a depth image, which we ignore)
+    raster_out = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -90,6 +96,7 @@ def render_predicted(pc : dict,
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
+    rendered_image, radii = raster_out[0], raster_out[1]
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

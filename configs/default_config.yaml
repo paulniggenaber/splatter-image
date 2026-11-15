@@ -30,6 +30,12 @@ opt:
     beta: 0.9999
   lambda_lpips: 0.0
   pretrained_ckpt: null
+  # when fine-tuning from pretrained_ckpt: start the "best validation PSNR" at 0,
+  # so that the fine-tuned run saves its own model_best.pth
+  reset_best_psnr: true
+  # symmetry extension (only used if model.symmetry.enabled)
+  lambda_plane: 0.1      # weight of the mirror-plane loss
+  sym_lr: 0.0001         # learning rate of the two new heads (they start from scratch)
 
 model:
   max_sh_degree: 1
@@ -52,6 +58,11 @@ model:
   cross_view_attention: true
   base_dim: 128
   isotropic: false
+  # symmetry extension: predicted mirror plane + mirrored twin Gaussians
+  symmetry:
+    enabled: false
+    switch_bias: -2.0      # twins start mostly off: sigmoid(-2) = 0.12
+    gt_plane_iters: 5000   # mirror with the TRUE plane for the first N training steps
 
 logging:
   ckpt_iterations: 1000
