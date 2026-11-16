@@ -69,19 +69,48 @@ def cams_from_data(data, idxs):
 
 
 # ----------------------------------------------------------------------------- oracle scores
-def contribution_scores(pc, cams, cfg):
-    """Multi-view contribution  sum_v sum_p alpha_i G_i(p) T_{i,p,v}.  Needs NO ground truth."""
+def contribution_scores(pc, cams, cfg, weights=None):
+    """Multi-view contribution  sum_v u_v sum_p alpha_i G_i(p) T_{i,p,v}.  Needs NO ground truth.
+    weights u_v (optional): per-view weights, e.g. angle_balanced_weights()."""
     pc = detached(pc)
+    if weights is None:
+        weights = [1.0] * len(cams)
     N, dev = pc["xyz"].shape[0], pc["xyz"].device
     bg = torch.zeros(3, device=dev)
     score = torch.zeros(N, device=dev)
     with torch.enable_grad():
-        for cam in cams:
+        for cam, u in zip(cams, weights):
             ones = torch.ones(N, 3, device=dev, requires_grad=True)
             img = _render(pc, cam, bg, cfg, override_color=ones)
             (g,) = torch.autograd.grad(img[0].sum(), ones)
-            score += g[:, 0]
+            score += float(u) * g[:, 0]
     return score
+
+
+def angle_balanced_weights(angles_deg, bin_deg=30):
+    """Each angle bin (w.r.t. the input camera) gets the same total weight, however many scoring
+    views fall in it. Fixes the bias towards the many far views of the test orbit."""
+    bins = [int(a // bin_deg) for a in angles_deg]
+    count = {b: bins.count(b) for b in set(bins)}
+    w = [1.0 / count[b] for b in bins]
+    s = sum(w)
+    return [x * len(w) / s for x in w]
+
+
+def iterative_contribution_chain(pc, cams, cfg, budgets, weights=None):
+    """Iterative (re-scored) pruning: for budgets in decreasing order, recompute contribution on the
+    Gaussians that are still kept, then keep the top-k of N. Accounts for redundancy: once a front
+    Gaussian is removed, the one behind it becomes visible and gains contribution.
+    Returns {budget: LongTensor of kept indices into the ORIGINAL pc}. Cost: len(budgets) x len(cams) renders."""
+    N = pc["xyz"].shape[0]
+    cur = torch.arange(N, device=pc["xyz"].device)
+    out = {}
+    for b in sorted(budgets, reverse=True):
+        k = max(1, int(round(b * N)))
+        s = contribution_scores(subset(pc, cur), cams, cfg, weights)
+        cur = cur[topk_indices(s, min(k, cur.numel()))]
+        out[b] = cur
+    return out
 
 
 def error_sensitivity_scores(pc, cams, gts, bg, cfg, signed=False):
@@ -128,6 +157,11 @@ def cheap_scores(pc, criterion, input_image=None, lam_edge=0.5, seed=0):
     if criterion == "opacity_area":   # alpha * area of the two largest axes ("how much it covers")
         s = pc["scaling"].sort(-1, descending=True).values
         return op * s[:, 0] * s[:, 1]
+    if criterion == "hybrid":         # mean rank of opacity (good near the input view) and opacity_area (far views)
+        a_rank = op.argsort().argsort().float()
+        s = pc["scaling"].sort(-1, descending=True).values
+        b_rank = (op * s[:, 0] * s[:, 1]).argsort().argsort().float()
+        return a_rank + b_rank
     if criterion == "edge_opacity":   # PhGS-style prior (deterministic top-k instead of sampling)
         assert input_image is not None
         return lam_edge * sobel_edges(input_image) + (1 - lam_edge) * op

@@ -152,6 +152,7 @@ def main(a):
         eval_cams = imp.cams_from_data(data, eval_ids)
         gts = torch.stack([data["gt_images"][0, i] for i in eval_ids])
         angles = [angle_deg(data["camera_centers"][0, 0], data["camera_centers"][0, i]) for i in eval_ids]
+        score_angles = [angle_deg(data["camera_centers"][0, 0], data["camera_centers"][0, i]) for i in score_ids]
 
         def evaluate(pc_sel, crit, budget, n_kept, sel_ms):
             imgs = torch.stack([imp._render(pc_sel, c, bg, cfg) for c in eval_cams]).clamp(0, 1)
@@ -180,8 +181,20 @@ def main(a):
                     evaluate(m, "merge", 1.0 / b ** 2, m["xyz"].shape[0],
                              1000 * (time.perf_counter() - t0))
                 continue
+            if crit.startswith("contribution_iter"):
+                w = imp.angle_balanced_weights(score_angles) if crit.endswith("_bal") else None
+                chain = imp.iterative_contribution_chain(pc, imp.cams_from_data(data, score_ids), cfg,
+                                                         a.budgets, w)
+                torch.cuda.synchronize()
+                sel_ms = 1000 * (time.perf_counter() - t0)
+                for budget in a.budgets:
+                    evaluate(imp.subset(pc, chain[budget]), crit, budget, chain[budget].numel(), sel_ms)
+                continue
             if crit == "contribution":
                 score = imp.contribution_scores(pc, imp.cams_from_data(data, score_ids), cfg)
+            elif crit == "contribution_bal":
+                score = imp.contribution_scores(pc, imp.cams_from_data(data, score_ids), cfg,
+                                                imp.angle_balanced_weights(score_angles))
             elif crit in ("error_sens", "error_sens_signed"):
                 sgts = [data["gt_images"][0, i] for i in score_ids]
                 score = imp.error_sensitivity_scores(pc, imp.cams_from_data(data, score_ids), sgts,
