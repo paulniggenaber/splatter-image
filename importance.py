@@ -186,12 +186,16 @@ def merge_blocks(pc, H=128, W=128, b=2):
 
 
 # ----------------------------------------------------------------------------- Level 2 / 3
+INPUT_CHANNELS = {"all": 11, "rgb": 3, "gauss": 8}   # ablation: what does the head need?
+
+
 class ImportanceHead(nn.Module):
     """
-    Tiny CNN: (input RGB + predicted Gaussian parameter maps) -> one logit per pixel/Gaussian.
-    Input channels: rgb 3 + opacity 1 + log-scale 3 + distance |xyz| 1 + colour (SH dc) 3 = 11.
+    Tiny CNN: (input RGB and/or predicted Gaussian parameter maps) -> one logit per pixel/Gaussian.
+    inputs="all":   rgb 3 + opacity 1 + log-scale 3 + distance |xyz| 1 + colour (SH dc) 3 = 11 ch
+    inputs="rgb":   only the input image (3 ch)       -> "is importance predictable from the image?"
+    inputs="gauss": only the predicted Gaussians (8 ch) -> "is the image needed at all?"
     Dilated convs give a ~30 px receptive field at ~80k parameters.
-    Optionally concatenate decoder features grabbed with a forward hook (then raise in_ch).
     """
     def __init__(self, in_ch=11, width=64):
         super().__init__()
@@ -203,17 +207,17 @@ class ImportanceHead(nn.Module):
         )
 
     @staticmethod
-    def make_input(rgb, recon, H=128, W=128):
-        """rgb (B,3,H,W); recon = batched model output dict (B,N,...) -> (B,11,H,W)."""
+    def make_input(rgb, recon, H=128, W=128, inputs="all"):
+        """rgb (B,3,H,W); recon = batched model output dict (B,N,...) -> (B,C,H,W), C = INPUT_CHANNELS[inputs]."""
         B = rgb.shape[0]
 
         def to_map(t):  # (B,N,C) -> (B,C,H,W)
             return t.reshape(B, H, W, -1).permute(0, 3, 1, 2)
-        feats = [rgb,
-                 to_map(recon["opacity"]),
+        gauss = [to_map(recon["opacity"]),
                  to_map(recon["scaling"].clamp_min(1e-8).log()),
                  to_map(recon["xyz"].norm(dim=-1, keepdim=True)),
                  to_map(recon["features_dc"].reshape(B, H * W, 3))]
+        feats = {"all": [rgb] + gauss, "rgb": [rgb], "gauss": gauss}[inputs]
         return torch.cat(feats, 1).detach()
 
     def forward(self, x):
@@ -229,6 +233,31 @@ def ranking_loss(logits, target, n_pairs=8192):
     sign = torch.sign(target.gather(1, i) - target.gather(1, j))
     keep = sign != 0
     return F.softplus(-sign * (li - lj))[keep].mean()
+
+
+def head_loss(logits, target, kind="rank"):
+    """kind="rank": pairwise ranking (order only); kind="mse": regression on the log-importance target."""
+    if kind == "rank":
+        return ranking_loss(logits, target)
+    if kind == "mse":
+        return F.mse_loss(logits, target)
+    raise ValueError(kind)
+
+
+def save_head(head, path, **meta):
+    torch.save({"state_dict": head.state_dict(), **meta}, path)
+
+
+def load_head(path, device):
+    """Loads a head saved by save_head (or an old plain state_dict = inputs 'all')."""
+    ckpt = torch.load(path, map_location=device)
+    if "state_dict" in ckpt:
+        state, inputs = ckpt["state_dict"], ckpt.get("inputs", "all")
+    else:
+        state, inputs = ckpt, "all"
+    head = ImportanceHead(in_ch=INPUT_CHANNELS[inputs]).to(device)
+    head.load_state_dict(state)
+    return head.eval(), inputs
 
 
 def straight_through_topk_mask(logits, keep_frac, tau=1.0):

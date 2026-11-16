@@ -9,6 +9,10 @@ At test time: one forward of the head, no renders, no ground truth.
 
     python train_head.py cars --target contribution --out runs/head_A     # variant A
     python train_head.py cars --target error_sens   --out runs/head_B     # variant B
+Ablations (tune on val only; compare val_overlap10 in <out>/log.csv):
+    --inputs rgb | gauss | all     what the head sees (default all)
+    --loss   rank | mse            ranking vs regression on log-importance (default rank)
+    --n_views 4 | 16 | 32          oracle views per training object
 Then:
     python eval_budget.py cars --criteria opacity contribution learned --head_ckpt runs/head_A/head.pth
 """
@@ -53,7 +57,9 @@ def main(a):
 
     train_set, val_set = get_dataset(cfg, "train"), get_dataset(cfg, "val")
     loader = DataLoader(train_set, batch_size=1, shuffle=True, num_workers=0)
-    head = imp.ImportanceHead().to(device)
+    head = imp.ImportanceHead(in_ch=imp.INPUT_CHANNELS[a.inputs]).to(device)
+    meta = dict(inputs=a.inputs, loss=a.loss, target=a.target, n_views=a.n_views, lr=a.lr)
+    print("head config:", meta, flush=True)
     opt = torch.optim.AdamW(head.parameters(), lr=a.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, a.steps)
     os.makedirs(a.out, exist_ok=True)
@@ -72,8 +78,8 @@ def main(a):
             # frame 0 is the input, frames 1..V are random other views of the same object
             view_ids = list(range(n_in, data["gt_images"].shape[1]))
             target = oracle(pc, data, view_ids, cfg, bg, a.target)[None]
-            logits = head(imp.ImportanceHead.make_input(inp[:, 0], recon))
-            loss = imp.ranking_loss(logits, target)
+            logits = head(imp.ImportanceHead.make_input(inp[:, 0], recon, inputs=a.inputs))
+            loss = imp.head_loss(logits, target, a.loss)
             (loss / a.accum).backward()
             if (step + 1) % a.accum == 0:
                 opt.step(); opt.zero_grad(set_to_none=True)
@@ -96,7 +102,7 @@ def main(a):
                         vpc = {k: v[0].contiguous() for k, v in vrec.items()}
                         vids = list(range(n_in, vd["gt_images"].shape[1]))[1::10]  # 25 views
                         vt = oracle(vpc, vd, vids, cfg, bg, a.target)
-                        vl = head(imp.ImportanceHead.make_input(vin[:, 0], vrec))[0]
+                        vl = head(imp.ImportanceHead.make_input(vin[:, 0], vrec, inputs=a.inputs))[0]
                     ov10.append(topk_overlap(vl, vt, 0.10)); ov5.append(topk_overlap(vl, vt, 0.05))
                     op10.append(topk_overlap(vpc["opacity"].squeeze(-1), vt, 0.10))
                     free_cached_example(val_set, val_set.get_example_id(j))
@@ -105,7 +111,7 @@ def main(a):
                       f"(opacity {m(op10):.3f}) | top5% head {m(ov5):.3f}", flush=True)
                 log.write(f"{step},{loss.item():.5f},{m(ov10):.4f},{m(ov5):.4f},{m(op10):.4f}\n")
                 log.flush()
-                torch.save(head.state_dict(), os.path.join(a.out, "head.pth"))
+                imp.save_head(head, os.path.join(a.out, "head.pth"), **meta)
                 head.train()
             if step >= a.steps:
                 break
@@ -115,6 +121,8 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("dataset_name", default="cars")
     p.add_argument("--target", choices=["contribution", "error_sens"], default="contribution")
+    p.add_argument("--inputs", choices=["all", "rgb", "gauss"], default="all")
+    p.add_argument("--loss", choices=["rank", "mse"], default="rank")
     p.add_argument("--n_views", type=int, default=16, help="oracle views per training object")
     p.add_argument("--steps", type=int, default=8000)
     p.add_argument("--accum", type=int, default=4)

@@ -93,10 +93,10 @@ def main(a):
                       dtype=torch.float32, device=device)
     lpips_net = lpips_lib.LPIPS(net="vgg").to(device)
 
-    head = None
+    head, head_inputs = None, "all"
     if "learned" in a.criteria:
-        head = imp.ImportanceHead().to(device).eval()
-        head.load_state_dict(torch.load(a.head_ckpt, map_location=device))
+        head, head_inputs = imp.load_head(a.head_ckpt, device)   # input set stored in the checkpoint
+        print(f"Loaded head {a.head_ckpt} (inputs={head_inputs})")
 
     dataset = get_dataset(cfg, a.split)
     end = len(dataset) if a.max_objects <= 0 else min(len(dataset), a.start_idx + a.max_objects)
@@ -165,7 +165,7 @@ def main(a):
                 score = imp.error_sensitivity_scores(pc, imp.cams_from_data(data, score_ids), sgts,
                                                      bg, cfg, signed=crit.endswith("signed"))
             elif crit == "learned":
-                x = imp.ImportanceHead.make_input(inp[:, 0], recon)
+                x = imp.ImportanceHead.make_input(inp[:, 0], recon, inputs=head_inputs)
                 score = head(x)[0]
             else:
                 score = imp.cheap_scores(pc, crit, input_image=inp[0, 0], seed=d_idx)
