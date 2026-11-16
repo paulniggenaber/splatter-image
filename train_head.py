@@ -4,7 +4,7 @@ expensive multi-view oracle (knowledge distillation of a ranking).
 
 Per step, for a training object:
     frozen model -> Gaussians -> oracle score from V random training views (computed on the fly)
-    head(input image + predicted Gaussian maps) -> logits -> pairwise ranking loss vs oracle
+    head(input image + predicted Gaussian maps) -> logits -> ranking loss vs oracle
 At test time: one forward of the head, no renders, no ground truth.
 
     python train_head.py cars --target contribution --out runs/head_A     # variant A
@@ -13,19 +13,23 @@ Ablations (tune on val only; compare val_overlap10 in <out>/log.csv):
     --inputs rgb | gauss | all     what the head sees (default all)
     --loss   rank | mse            ranking vs regression on log-importance (default rank)
     --n_views 4 | 16 | 32          oracle views per training object
+Speed: the bottleneck is reading many small files from BeeGFS, so data is loaded by
+--num_workers parallel workers (set #SBATCH --cpus-per-task >= num_workers + 1), and the
+validation objects + their oracle targets are computed ONCE at start-up and kept on the GPU.
 Then:
-    python eval_budget.py cars --criteria opacity contribution learned --head_ckpt runs/head_A/head.pth
+    python eval_budget.py cars --criteria opacity opacity_area contribution learned --head_ckpt runs/head_A/head.pth
 """
 import argparse
 import os
 import random
+import time
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 import importance as imp
 from datasets.dataset_factory import get_dataset
-from eval_budget import free_cached_example, load_model, model_input
+from eval_budget import FreeCacheDataset, load_model, model_input
 
 
 def oracle(pc, data, view_ids, cfg, bg, target):
@@ -45,6 +49,25 @@ def topk_overlap(pred, target, frac):
     return len(a & b) / k
 
 
+@torch.no_grad()
+def build_val_cache(model, cfg, bg, a, device):
+    """Load n_val validation objects once; keep head inputs (all 3 variants) + oracle targets on GPU."""
+    val_set = get_dataset(cfg, "val")
+    loader = DataLoader(Subset(FreeCacheDataset(val_set), list(range(a.n_val))), batch_size=1,
+                        num_workers=a.num_workers)
+    n_in, cache = cfg.data.input_images, []
+    for vd in loader:
+        vd = {k: v.to(device) for k, v in vd.items()}
+        vin = model_input(vd, cfg)
+        vrec = model(vin, vd["view_to_world_transforms"][:, :n_in], vd["source_cv2wT_quat"][:, :n_in], None)
+        vpc = {k: v[0].contiguous() for k, v in vrec.items()}
+        vids = list(range(n_in, vd["gt_images"].shape[1]))[1::10]          # 25 spread-out views
+        cache.append(dict(x=imp.ImportanceHead.make_input(vin[:, 0], vrec, inputs=a.inputs),
+                          target=oracle(vpc, vd, vids, cfg, bg, a.target),
+                          opacity=vpc["opacity"].squeeze(-1)))
+    return cache
+
+
 def main(a):
     torch.manual_seed(a.seed); random.seed(a.seed)
     device = torch.device("cuda:0")
@@ -55,8 +78,16 @@ def main(a):
     bg = torch.tensor([1, 1, 1] if cfg.data.white_background else [0, 0, 0],
                       dtype=torch.float32, device=device)
 
-    train_set, val_set = get_dataset(cfg, "train"), get_dataset(cfg, "val")
-    loader = DataLoader(train_set, batch_size=1, shuffle=True, num_workers=0)
+    t0 = time.time()
+    val_cache = build_val_cache(model, cfg, bg, a, device)
+    print(f"validation cache: {len(val_cache)} objects in {time.time() - t0:.0f}s", flush=True)
+    op10 = sum(topk_overlap(v["opacity"], v["target"], 0.10) for v in val_cache) / len(val_cache)
+
+    train_set = get_dataset(cfg, "train")
+    loader = DataLoader(FreeCacheDataset(train_set), batch_size=1, shuffle=True,
+                        num_workers=a.num_workers, pin_memory=True,
+                        persistent_workers=a.num_workers > 0,
+                        prefetch_factor=4 if a.num_workers > 0 else None)
     head = imp.ImportanceHead(in_ch=imp.INPUT_CHANNELS[a.inputs]).to(device)
     meta = dict(inputs=a.inputs, loss=a.loss, target=a.target, n_views=a.n_views, lr=a.lr)
     print("head config:", meta, flush=True)
@@ -67,9 +98,10 @@ def main(a):
     log.write("step,loss,val_overlap10,val_overlap5,opacity_overlap10\n")
 
     step, n_in = 0, cfg.data.input_images
+    t_start = t_last = time.time()
     while step < a.steps:
-        for idx_in_epoch, data in enumerate(loader):
-            data = {k: v.to(device) for k, v in data.items()}
+        for data in loader:
+            data = {k: v.to(device, non_blocking=True) for k, v in data.items()}
             inp = model_input(data, cfg)
             with torch.no_grad():
                 recon = model(inp, data["view_to_world_transforms"][:, :n_in],
@@ -84,32 +116,27 @@ def main(a):
             if (step + 1) % a.accum == 0:
                 opt.step(); opt.zero_grad(set_to_none=True)
             sched.step(); step += 1
-            for ds in (train_set,):                          # keep RAM flat
-                for name, val in vars(ds).items():
-                    if name.startswith("all_") and isinstance(val, dict) and len(val) > 8:
-                        val.clear()
+
+            if step % a.print_every == 0:
+                now = time.time()
+                sps = a.print_every / (now - t_last); t_last = now
+                eta = (a.steps - step) / max(sps, 1e-9) / 60
+                print(f"step {step}/{a.steps} loss {loss.item():.4f} | {sps:.2f} steps/s | "
+                      f"ETA {eta:.0f} min", flush=True)
 
             if step % a.val_every == 0 or step == a.steps:
                 head.eval()
-                ov10, ov5, op10 = [], [], []
-                for j in range(a.n_val):
-                    vd = {k: (v[None] if torch.is_tensor(v) else v) for k, v in val_set[j].items()}
-                    vd = {k: v.to(device) for k, v in vd.items()}
-                    vin = model_input(vd, cfg)
-                    with torch.no_grad():
-                        vrec = model(vin, vd["view_to_world_transforms"][:, :n_in],
-                                     vd["source_cv2wT_quat"][:, :n_in], None)
-                        vpc = {k: v[0].contiguous() for k, v in vrec.items()}
-                        vids = list(range(n_in, vd["gt_images"].shape[1]))[1::10]  # 25 views
-                        vt = oracle(vpc, vd, vids, cfg, bg, a.target)
-                        vl = head(imp.ImportanceHead.make_input(vin[:, 0], vrec, inputs=a.inputs))[0]
-                    ov10.append(topk_overlap(vl, vt, 0.10)); ov5.append(topk_overlap(vl, vt, 0.05))
-                    op10.append(topk_overlap(vpc["opacity"].squeeze(-1), vt, 0.10))
-                    free_cached_example(val_set, val_set.get_example_id(j))
+                with torch.no_grad():
+                    ov10, ov5 = [], []
+                    for v in val_cache:
+                        vl = head(v["x"])[0]
+                        ov10.append(topk_overlap(vl, v["target"], 0.10))
+                        ov5.append(topk_overlap(vl, v["target"], 0.05))
                 m = lambda x: sum(x) / len(x)
-                print(f"step {step} loss {loss.item():.4f} | top10% overlap head {m(ov10):.3f} "
-                      f"(opacity {m(op10):.3f}) | top5% head {m(ov5):.3f}", flush=True)
-                log.write(f"{step},{loss.item():.5f},{m(ov10):.4f},{m(ov5):.4f},{m(op10):.4f}\n")
+                print(f"[val] step {step} | top10% overlap head {m(ov10):.3f} (opacity {op10:.3f}) "
+                      f"| top5% head {m(ov5):.3f} | elapsed {(time.time() - t_start) / 60:.1f} min",
+                      flush=True)
+                log.write(f"{step},{loss.item():.5f},{m(ov10):.4f},{m(ov5):.4f},{op10:.4f}\n")
                 log.flush()
                 imp.save_head(head, os.path.join(a.out, "head.pth"), **meta)
                 head.train()
@@ -127,8 +154,11 @@ if __name__ == "__main__":
     p.add_argument("--steps", type=int, default=8000)
     p.add_argument("--accum", type=int, default=4)
     p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--val_every", type=int, default=1000)
+    p.add_argument("--val_every", type=int, default=500)
+    p.add_argument("--print_every", type=int, default=20)
     p.add_argument("--n_val", type=int, default=20)
+    p.add_argument("--num_workers", type=int, default=6,
+                   help="parallel file readers; set #SBATCH --cpus-per-task >= num_workers + 1")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default="runs/head_A")
     main(p.parse_args())

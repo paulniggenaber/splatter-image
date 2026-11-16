@@ -65,6 +65,21 @@ def free_cached_example(dataset, example_id):
             val.pop(example_id, None)
 
 
+class FreeCacheDataset(torch.utils.data.Dataset):
+    """Wraps SRNDataset so that every item frees its image cache right after loading.
+    Runs inside each DataLoader worker -> parallel file reading without the RAM leak."""
+    def __init__(self, ds):
+        self.ds = ds
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, i):
+        item = self.ds[i]
+        free_cached_example(self.ds, self.ds.get_example_id(i))
+        return item
+
+
 def model_input(data, cfg):
     n_in = cfg.data.input_images
     if cfg.data.origin_distances:
@@ -100,9 +115,10 @@ def main(a):
 
     dataset = get_dataset(cfg, a.split)
     end = len(dataset) if a.max_objects <= 0 else min(len(dataset), a.start_idx + a.max_objects)
-    dataset_sub = torch.utils.data.Subset(dataset, list(range(a.start_idx, end)))
+    dataset_sub = torch.utils.data.Subset(FreeCacheDataset(dataset), list(range(a.start_idx, end)))
     loader = DataLoader(dataset_sub, batch_size=1, shuffle=False, num_workers=a.num_workers,
-                        pin_memory=True, persistent_workers=False)
+                        pin_memory=True, persistent_workers=a.num_workers > 0,
+                        prefetch_factor=4 if a.num_workers > 0 else None)
 
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     f_obj = open(a.out + "_objects.csv", "w", newline="")
@@ -196,6 +212,7 @@ if __name__ == "__main__":
     p.add_argument("--budgets", nargs="+", type=float,
                    default=[0.25, 0.20, 0.10, 0.05, 0.02, 0.01])
     p.add_argument("--head_ckpt", default=None)
-    p.add_argument("--num_workers", type=int, default=0, help="keep 0: see free_cached_example")
+    p.add_argument("--num_workers", type=int, default=4,
+                   help="parallel file readers (BeeGFS is slow per file); keep <= --cpus-per-task")
     p.add_argument("--out", default="results/budget")
     main(p.parse_args())
