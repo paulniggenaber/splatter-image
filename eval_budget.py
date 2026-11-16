@@ -65,6 +65,13 @@ def free_cached_example(dataset, example_id):
             val.pop(example_id, None)
 
 
+def worker_kwargs(num_workers):
+    """DataLoader kwargs valid on old (1.x) and new PyTorch: prefetch only with workers."""
+    if num_workers > 0:
+        return dict(persistent_workers=True, prefetch_factor=4)
+    return {}
+
+
 class FreeCacheDataset(torch.utils.data.Dataset):
     """Wraps SRNDataset so that every item frees its image cache right after loading.
     Runs inside each DataLoader worker -> parallel file reading without the RAM leak."""
@@ -117,8 +124,7 @@ def main(a):
     end = len(dataset) if a.max_objects <= 0 else min(len(dataset), a.start_idx + a.max_objects)
     dataset_sub = torch.utils.data.Subset(FreeCacheDataset(dataset), list(range(a.start_idx, end)))
     loader = DataLoader(dataset_sub, batch_size=1, shuffle=False, num_workers=a.num_workers,
-                        pin_memory=True, persistent_workers=a.num_workers > 0,
-                        prefetch_factor=4 if a.num_workers > 0 else None)
+                        pin_memory=True, **worker_kwargs(a.num_workers))
 
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     f_obj = open(a.out + "_objects.csv", "w", newline="")

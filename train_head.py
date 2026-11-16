@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader, Subset
 
 import importance as imp
 from datasets.dataset_factory import get_dataset
-from eval_budget import FreeCacheDataset, load_model, model_input
+from eval_budget import FreeCacheDataset, load_model, model_input, worker_kwargs
 
 
 def oracle(pc, data, view_ids, cfg, bg, target):
@@ -86,13 +86,12 @@ def main(a):
     train_set = get_dataset(cfg, "train")
     loader = DataLoader(FreeCacheDataset(train_set), batch_size=1, shuffle=True,
                         num_workers=a.num_workers, pin_memory=True,
-                        persistent_workers=a.num_workers > 0,
-                        prefetch_factor=4 if a.num_workers > 0 else None)
+                        **worker_kwargs(a.num_workers))
     head = imp.ImportanceHead(in_ch=imp.INPUT_CHANNELS[a.inputs]).to(device)
     meta = dict(inputs=a.inputs, loss=a.loss, target=a.target, n_views=a.n_views, lr=a.lr)
     print("head config:", meta, flush=True)
     opt = torch.optim.AdamW(head.parameters(), lr=a.lr, weight_decay=1e-4)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, a.steps)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, max(1, a.steps // a.accum))
     os.makedirs(a.out, exist_ok=True)
     log = open(os.path.join(a.out, "log.csv"), "w")
     log.write("step,loss,val_overlap10,val_overlap5,opacity_overlap10\n")
@@ -114,8 +113,8 @@ def main(a):
             loss = imp.head_loss(logits, target, a.loss)
             (loss / a.accum).backward()
             if (step + 1) % a.accum == 0:
-                opt.step(); opt.zero_grad(set_to_none=True)
-            sched.step(); step += 1
+                opt.step(); opt.zero_grad(set_to_none=True); sched.step()
+            step += 1
 
             if step % a.print_every == 0:
                 now = time.time()
