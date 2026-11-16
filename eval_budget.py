@@ -65,6 +65,28 @@ def free_cached_example(dataset, example_id):
             val.pop(example_id, None)
 
 
+def worker_kwargs(num_workers):
+    """DataLoader kwargs valid on old (1.x) and new PyTorch: prefetch only with workers."""
+    if num_workers > 0:
+        return dict(persistent_workers=True, prefetch_factor=4)
+    return {}
+
+
+class FreeCacheDataset(torch.utils.data.Dataset):
+    """Wraps SRNDataset so that every item frees its image cache right after loading.
+    Runs inside each DataLoader worker -> parallel file reading without the RAM leak."""
+    def __init__(self, ds):
+        self.ds = ds
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, i):
+        item = self.ds[i]
+        free_cached_example(self.ds, self.ds.get_example_id(i))
+        return item
+
+
 def model_input(data, cfg):
     n_in = cfg.data.input_images
     if cfg.data.origin_distances:
@@ -100,9 +122,9 @@ def main(a):
 
     dataset = get_dataset(cfg, a.split)
     end = len(dataset) if a.max_objects <= 0 else min(len(dataset), a.start_idx + a.max_objects)
-    dataset_sub = torch.utils.data.Subset(dataset, list(range(a.start_idx, end)))
+    dataset_sub = torch.utils.data.Subset(FreeCacheDataset(dataset), list(range(a.start_idx, end)))
     loader = DataLoader(dataset_sub, batch_size=1, shuffle=False, num_workers=a.num_workers,
-                        pin_memory=True, persistent_workers=False)
+                        pin_memory=True, **worker_kwargs(a.num_workers))
 
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     f_obj = open(a.out + "_objects.csv", "w", newline="")
@@ -130,6 +152,7 @@ def main(a):
         eval_cams = imp.cams_from_data(data, eval_ids)
         gts = torch.stack([data["gt_images"][0, i] for i in eval_ids])
         angles = [angle_deg(data["camera_centers"][0, 0], data["camera_centers"][0, i]) for i in eval_ids]
+        score_angles = [angle_deg(data["camera_centers"][0, 0], data["camera_centers"][0, i]) for i in score_ids]
 
         def evaluate(pc_sel, crit, budget, n_kept, sel_ms):
             imgs = torch.stack([imp._render(pc_sel, c, bg, cfg) for c in eval_cams]).clamp(0, 1)
@@ -158,8 +181,20 @@ def main(a):
                     evaluate(m, "merge", 1.0 / b ** 2, m["xyz"].shape[0],
                              1000 * (time.perf_counter() - t0))
                 continue
+            if crit.startswith("contribution_iter"):
+                w = imp.angle_balanced_weights(score_angles) if crit.endswith("_bal") else None
+                chain = imp.iterative_contribution_chain(pc, imp.cams_from_data(data, score_ids), cfg,
+                                                         a.budgets, w)
+                torch.cuda.synchronize()
+                sel_ms = 1000 * (time.perf_counter() - t0)
+                for budget in a.budgets:
+                    evaluate(imp.subset(pc, chain[budget]), crit, budget, chain[budget].numel(), sel_ms)
+                continue
             if crit == "contribution":
                 score = imp.contribution_scores(pc, imp.cams_from_data(data, score_ids), cfg)
+            elif crit == "contribution_bal":
+                score = imp.contribution_scores(pc, imp.cams_from_data(data, score_ids), cfg,
+                                                imp.angle_balanced_weights(score_angles))
             elif crit in ("error_sens", "error_sens_signed"):
                 sgts = [data["gt_images"][0, i] for i in score_ids]
                 score = imp.error_sensitivity_scores(pc, imp.cams_from_data(data, score_ids), sgts,
@@ -196,6 +231,7 @@ if __name__ == "__main__":
     p.add_argument("--budgets", nargs="+", type=float,
                    default=[0.25, 0.20, 0.10, 0.05, 0.02, 0.01])
     p.add_argument("--head_ckpt", default=None)
-    p.add_argument("--num_workers", type=int, default=0, help="keep 0: see free_cached_example")
+    p.add_argument("--num_workers", type=int, default=4,
+                   help="parallel file readers (BeeGFS is slow per file); keep <= --cpus-per-task")
     p.add_argument("--out", default="results/budget")
     main(p.parse_args())
