@@ -486,6 +486,20 @@ class SingleImageSongUNetPredictor(nn.Module):
             self.plane_head = nn.Sequential(nn.Linear(cfg.model.base_dim, 64),
                                             nn.SiLU(),
                                             nn.Linear(64, 4))
+            # Optional: a separate small CNN that looks at the input photo only and
+            # predicts the plane (keeps spatial layout, so it can tell the car's
+            # orientation). Used instead of plane_head; not connected to the U-Net.
+            self.use_plane_net = bool(cfg.model.symmetry.get("plane_net", False))
+            if self.use_plane_net:
+                self.plane_net = nn.Sequential(
+                    nn.Conv2d(3, 32, 5, stride=2, padding=2), nn.SiLU(),
+                    nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.SiLU(),
+                    nn.Conv2d(64, 128, 3, stride=2, padding=1), nn.SiLU(),
+                    nn.Conv2d(128, 128, 3, stride=2, padding=1), nn.SiLU(),
+                    nn.AdaptiveAvgPool2d(4), nn.Flatten(),
+                    nn.Linear(128 * 16, 256), nn.SiLU(), nn.Linear(256, 4))
+
+    use_plane_net = False
 
     def forward(self, x, film_camera_emb=None, N_views_xa=1):
         if not self.symmetry:
@@ -494,13 +508,17 @@ class SingleImageSongUNetPredictor(nn.Module):
                              N_views_xa=N_views_xa)
             return self.out(x)
 
+        x_in = x
         x, feat = self.encoder(x,
                                film_camera_emb=film_camera_emb,
                                N_views_xa=N_views_xa,
                                return_features=True)
         sym_out = self.sym_head(feat)                      # (B, 4, H, W): switch logit + colour correction
-        plane_in = feat.detach() if self.plane_detach else feat   # detach: plane loss stays out of the trunk
-        plane = self.plane_head(plane_in.mean(dim=(2, 3)))  # (B, 4)
+        if self.use_plane_net:
+            plane = self.plane_net(x_in[:, :3])             # separate CNN on the photo, (B, 4)
+        else:
+            plane_in = feat.detach() if self.plane_detach else feat   # detach: plane loss stays out of the trunk
+            plane = self.plane_head(plane_in.mean(dim=(2, 3)))  # (B, 4)
         return self.out(x), sym_out, plane
 
 def symmetry_enabled(cfg):
@@ -729,7 +747,9 @@ class GaussianSplatPredictor(nn.Module):
                 focals_pixels=None,
                 activate_output=True,
                 sym_plane_override=None,
-                sym_switch_override=None):
+                sym_switch_override=None,
+                sym_colour_off=False):
+        # sym_colour_off (bool): ignore the twins' colour correction (ablation).
         # sym_plane_override (B, 4): mirror with this plane instead of the predicted
         #   one (true plane during warm-up, or "oracle plane" evaluation).
         # sym_switch_override (float): force the switch to this value (tests).
@@ -849,6 +869,8 @@ class GaussianSplatPredictor(nn.Module):
             sym_out = self.flatten_vector(sym_out)                        # (B, N, 4)
             switch = torch.sigmoid(sym_out[:, :, :1])                     # (B, N, 1)
             twin_dc_delta = sym_out[:, :, 1:].unsqueeze(2)                # (B, N, 1, 3)
+            if sym_colour_off:
+                twin_dc_delta = torch.zeros_like(twin_dc_delta)
             if sym_switch_override is not None:
                 switch = torch.full_like(switch, float(sym_switch_override))
             plane_used = sym_plane_pred if sym_plane_override is None else sym_plane_override

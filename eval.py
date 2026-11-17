@@ -46,6 +46,7 @@ def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folde
             "oracle"       a symmetry model mirrors with the TRUE plane.
             "oracle_on"    as "oracle", and the switch is forced to 1.
             "twins_off"    a symmetry model with the switch forced to 0 (no twins).
+            "colour_off"   a symmetry model without the twins' colour correction.
             "twin_all"     training-free: every Gaussian of any model gets a twin
                            across the TRUE plane.
             "replace_far"  training-free: keep the Gaussians on the camera's side
@@ -124,6 +125,12 @@ def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folde
             model_kwargs["sym_plane_override"] = sym_plane_gt
         if sym_mode == "oracle_on":
             model_kwargs["sym_switch_override"] = 1.0
+        if sym_mode == "colour_off":
+            # symmetry model as trained, but the twins keep the plain mirrored colour
+            # (tells whether the learned colour correction helps)
+            # (mirrors with the TRUE plane, so compare it with the "oracle" mode)
+            model_kwargs["sym_colour_off"] = True
+            model_kwargs["sym_plane_override"] = sym_plane_gt
         if sym_mode == "twins_off":
             # symmetry model with all twins invisible: shows what the fine-tuned
             # network does on its own, without any mirroring
@@ -378,7 +385,7 @@ def parse_arguments():
     parser.add_argument('--out_folder', type=str, default='out', help='Output folder to save renders (default: out)')
     parser.add_argument('--save_vis', type=int, default=0, help='Number of examples for which to save renders (default: 0)')
     parser.add_argument('--sym_mode', type=str, default='model',
-                        choices=['model', 'oracle', 'oracle_on', 'twins_off', 'twin_all', 'replace_far'],
+                        choices=['model', 'oracle', 'oracle_on', 'twins_off', 'colour_off', 'twin_all', 'replace_far'],
                         help='How symmetry is used, see evaluate_dataset (default: model = the model as it is)')
     parser.add_argument('--max_examples', type=int, default=None,
                         help='Evaluate only the first N objects (default: all)')

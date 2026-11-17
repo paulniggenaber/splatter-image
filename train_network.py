@@ -66,7 +66,7 @@ def main(cfg: DictConfig):
     if cfg.model.network_with_offset and use_symmetry:
         # The two symmetry heads start from scratch, so they get their own
         # (higher) learning rate. Everything else trains at base_lr.
-        is_head = lambda n: n.startswith("sym_head") or n.startswith("plane_head")
+        is_head = lambda n: n.startswith("sym_head") or n.startswith("plane_head") or n.startswith("plane_net")
         named = list(gaussian_predictor.network_with_offset.named_parameters())
         l.append({'params': [p for n, p in named if not is_head(n)],
          'lr': cfg.opt.base_lr})

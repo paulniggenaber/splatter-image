@@ -39,7 +39,7 @@ def main(ckpt_dir):
     sym = GaussianSplatPredictor(cfg_sym)
     result = sym.load_state_dict(ckpt["model_state_dict"], strict=False)
     assert len(result.unexpected_keys) == 0, result.unexpected_keys
-    assert all(("sym_head" in k) or ("plane_head" in k) for k in result.missing_keys), result.missing_keys
+    assert all(("sym_head" in k) or ("plane_head" in k) or ("plane_net" in k) for k in result.missing_keys), result.missing_keys
     print("1 ok  released weights load; missing keys are only the new heads:", result.missing_keys)
     base.eval(); sym.eval()
 
@@ -111,6 +111,22 @@ def main(ckpt_dir):
     assert net.sym_head.bias.grad is not None and net.sym_head.bias.grad.abs().sum() > 0
     assert net.plane_head[0].weight.grad.abs().sum() > 0
     print("5 ok  gradients reach the switch head and the plane head")
+
+    # --- optional separate plane network: its loss must not reach the U-Net -------
+    with initialize(version_base=None, config_path="../configs"):
+        cfg_pn = compose(config_name="default_config",
+                         overrides=["+dataset=cars", "+experiment=lpips_100k",
+                                    "model.symmetry.enabled=true", "model.symmetry.plane_net=true"])
+    pn = GaussianSplatPredictor(cfg_pn)
+    pn.load_state_dict(ckpt["model_state_dict"], strict=False)
+    pn.train()
+    out = pn(inp, v2w, quat, None)
+    plane_loss(out["sym_plane"], plane).backward()
+    net = pn.network_with_offset
+    assert net.plane_net[0].weight.grad.abs().sum() > 0
+    trunk_grads = [p.grad for n, p in net.encoder.named_parameters() if p.grad is not None]
+    assert all(g.abs().sum() == 0 for g in trunk_grads), "plane loss reached the U-Net"
+    print("6 ok  plane_net gets gradients from the plane loss; the U-Net gets none")
     print("ALL MODEL TESTS PASSED")
 
 
