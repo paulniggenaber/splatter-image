@@ -172,6 +172,13 @@ def main(cfg: DictConfig):
     gaussian_predictor, optimizer = fabric.setup(
         gaussian_predictor, optimizer
     )
+    # A restored Adam state was loaded while the model was still on the CPU. Move it
+    # to the GPU, next to its parameters (found when testing resume: "two devices").
+    for group in optimizer.param_groups:
+        for p in group["params"]:
+            for key, value in optimizer.state.get(p, {}).items():
+                if torch.is_tensor(value):
+                    optimizer.state[p][key] = value.to(p.device)
     dataloader = fabric.setup_dataloaders(dataloader)
     
     gaussian_predictor.train()
