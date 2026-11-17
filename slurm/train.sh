@@ -13,7 +13,7 @@
 # same command again: it continues from experiments_out/<RUN>/model_latest.pth
 # (saved every 1000 steps).
 #
-# Optional: EXTRA="opt.iterations=50001" to pass more Hydra overrides.
+# Optional: EXTRA="opt.iterations=50001" to pass more Hydra overrides; LR=<base lr>; NAME=<folder name>.
 #SBATCH --partition=stud
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
@@ -33,7 +33,7 @@ export PYTHONUNBUFFERED=1            # show log lines immediately
 
 RUN=${RUN:-sym}
 CKPT=${CKPT:-$HOME/ckpt/cars}        # folder that contains model_latest.pth (released cars model)
-RUN_DIR=$PWD/experiments_out/$RUN    # fixed folder = a resubmitted job resumes
+RUN_DIR=$PWD/experiments_out/${NAME:-$RUN}    # fixed folder = a resubmitted job resumes
 
 if [ "$RUN" = "sym" ]; then
     SYM="model.symmetry.enabled=true"
@@ -50,9 +50,9 @@ date
 # Same settings for both runs. lpips_100k = the paper's fine-tune stage
 # (100,001 steps, LPIPS weight 0.01); base_lr raised to the paper's stage-1 rate
 # so the network can adapt to the twins.
-python train_network.py +dataset=cars +experiment=lpips_100k \
+python train_network.py +dataset=${DATASET:-cars} +experiment=lpips_100k \
     opt.pretrained_ckpt=$CKPT \
-    opt.base_lr=0.00005 \
+    opt.base_lr=${LR:-0.00005} \
     $SYM \
     hydra.run.dir=$RUN_DIR \
     $EXTRA \

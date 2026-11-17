@@ -37,9 +37,14 @@ def planes_from_wvt(wvt):
 class CachedCars(Dataset):
     """One item = K random (or fixed) views of one cached car."""
 
-    def __init__(self, folder, views_per_car, fixed_seed=None):
-        self.files = sorted(glob.glob(os.path.join(folder, "*.pt")))
-        assert len(self.files) > 0, "no cached cars in " + folder
+    def __init__(self, folders, views_per_car, fixed_seed=None, max_files=None):
+        if isinstance(folders, str):
+            folders = [folders]
+        self.files = []
+        for folder in folders:
+            found = sorted(glob.glob(os.path.join(folder, "*.pt")))
+            assert len(found) > 0, "no cached objects in " + folder
+            self.files += found[:max_files] if max_files else found
         self.k = views_per_car
         self.fixed_seed = fixed_seed
 
@@ -88,12 +93,12 @@ def summarize(err, off):
 
 
 @torch.no_grad()
-def evaluate_test(model, device, n_cars, workers):
-    """Test cars at the benchmark input view (view 64), through the normal dataset class."""
+def evaluate_test(model, device, n_cars, workers, category="cars"):
+    """Test objects at the benchmark input view (view 64), through the normal dataset class."""
     from hydra import compose, initialize
     from datasets.dataset_factory import get_dataset
     with initialize(version_base=None, config_path="configs"):
-        cfg = compose(config_name="default_config", overrides=["+dataset=cars", "+experiment=lpips_100k"])
+        cfg = compose(config_name="default_config", overrides=["+dataset={}".format(category), "+experiment=lpips_100k"])
     cfg.data.subset = n_cars
     dataset = get_dataset(cfg, "test")
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=workers)
@@ -132,6 +137,8 @@ def constant_baseline(train_ds, val_loader, device):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default=os.environ.get("SRN_CACHE_DIR"))
+    ap.add_argument("--categories", nargs="+", default=["cars"], choices=["cars", "chairs"],
+                    help="train on these categories together; val and test are reported per category")
     ap.add_argument("--out", required=True)
     ap.add_argument("--arch", default="resnet18", choices=["resnet18", "small"])
     ap.add_argument("--steps", type=int, default=4000)
@@ -149,14 +156,19 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     device = torch.device("cuda")
 
-    tag = glob.glob(os.path.join(args.cache, "srn_cars_*"))
-    assert len(tag) == 1, "expected one cache folder, found {}".format(tag)
-    train_ds = CachedCars(os.path.join(tag[0], "train"), args.views_per_car)
-    val_ds = CachedCars(os.path.join(tag[0], "val"), 4, fixed_seed=123)
+    tags = {}
+    for cat in args.categories:
+        found = glob.glob(os.path.join(args.cache, "srn_{}_*".format(cat)))
+        assert len(found) == 1, "expected one cache folder for {}, found {}".format(cat, found)
+        tags[cat] = found[0]
+    train_ds = CachedCars([os.path.join(t, "train") for t in tags.values()], args.views_per_car)
+    val_sets = {cat: CachedCars(os.path.join(t, "val"), 4, fixed_seed=123) for cat, t in tags.items()}
+    val_loaders = {cat: DataLoader(v, batch_size=16, shuffle=False, num_workers=args.workers)
+                   for cat, v in val_sets.items()}
+    val_loader = val_loaders[args.categories[0]]            # model selection: the first category
     train_loader = DataLoader(train_ds, batch_size=args.cars_per_step, shuffle=True, drop_last=True,
                               num_workers=args.workers, persistent_workers=True)
-    val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=args.workers)
-    print("train cars {}, val cars {}".format(len(train_ds), len(val_ds)), flush=True)
+    print("train objects {}, val objects {}".format(len(train_ds), {c: len(v) for c, v in val_sets.items()}), flush=True)
 
     model = PlanePredictor(arch=args.arch).to(device).to(memory_format=torch.channels_last)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
@@ -184,7 +196,11 @@ def main():
                     step, loss.item(), (time.time() - t0) / 50), flush=True)
                 t0 = time.time()
             if step % args.eval_every == 0 or step == args.steps:
-                s = evaluate_cached(model, val_loader, device)
+                per_cat = {c: evaluate_cached(model, l, device) for c, l in val_loaders.items()}
+                s = dict(per_cat[args.categories[0]])
+                s["angle_mean"] = float(np.mean([v["angle_mean"] for v in per_cat.values()]))
+                s["per_category"] = {c: round(v["angle_mean"], 3) for c, v in per_cat.items()}
+                print("[val @ {}] per category {}".format(step, s["per_category"]), flush=True)
                 print("[val @ {}] angle mean {:.2f} median {:.2f} p90 {:.2f} | <5deg {:.1%} <3deg {:.1%}".format(
                     step, s["angle_mean"], s["angle_median"], s["angle_p90"], s["under5deg"], s["under3deg"]), flush=True)
                 log.append({"step": step, **s})
@@ -199,10 +215,16 @@ def main():
     from scene.plane_predictor import load_predictor
     best_model = load_predictor(os.path.join(args.out, "plane_predictor.pth"), device)
     result = {"constant_baseline_val": const, "val_log": log,
-              "val_best": evaluate_cached(best_model, val_loader, device)}
+              "val_best": {c: evaluate_cached(best_model, l, device) for c, l in val_loaders.items()}}
     if args.test_cars > 0:
-        result["test_view64"] = evaluate_test(best_model, device, args.test_cars, args.workers)
-        print("[test, input view 64, {} cars]".format(args.test_cars), json.dumps(result["test_view64"]), flush=True)
+        result["test_view64"] = {}
+        for cat in ["cars", "chairs"]:         # always report both, also for a cars-only predictor
+            try:
+                result["test_view64"][cat] = evaluate_test(best_model, device, args.test_cars, args.workers, cat)
+                print("[test {}, input view 64, {} objects]".format(cat, args.test_cars),
+                      json.dumps(result["test_view64"][cat]), flush=True)
+            except Exception as e:
+                print("test evaluation for {} skipped: {}".format(cat, e), flush=True)
     with open(os.path.join(args.out, "plane_scores.json"), "w") as f:
         json.dump(result, f, indent=2)
     print("done. best val angle error {:.2f} deg".format(best), flush=True)

@@ -42,7 +42,7 @@ echo "Job ${SLURM_JOB_ID} on $(hostname): pilot $RUN, $STEPS steps"
 nvidia-smi --query-gpu=name,memory.total --format=csv | head -2
 date
 
-python train_network.py +dataset=cars +experiment=lpips_100k \
+python train_network.py +dataset=${DATASET:-cars} +experiment=lpips_100k \
     opt.pretrained_ckpt=$CKPT opt.base_lr=0.00005 $SYM \
     data.subset=400 opt.iterations=$STEPS \
     logging.val_log=1000000 logging.loop_log=1000000 logging.ckpt_iterations=500 \
@@ -53,7 +53,7 @@ date
 
 for MODE in $MODES; do
     echo "=== eval $MODE ==="
-    python eval.py cars --experiment_path $RUN_DIR --max_examples ${EVAL_N:-100} \
+    python eval.py ${DATASET:-cars} --experiment_path $RUN_DIR --max_examples ${EVAL_N:-100} \
         --sym_mode $MODE --save_vis 3 --out_folder $RES/renders_$MODE \
         --scores_path $RES/scores_$MODE.json --per_view_path $RES/per_view_$MODE.txt
     cat $RES/scores_$MODE.json

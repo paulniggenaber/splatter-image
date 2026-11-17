@@ -34,7 +34,7 @@ if [ -n "$N" ]; then LIMIT="--max_examples $N"; else LIMIT=""; fi
 echo "Job ${SLURM_JOB_ID} on $(hostname): eval $RUN_DIR, modes: $MODES, N=${N:-all}"
 for MODE in $MODES; do
     echo "=== eval $MODE ==="; date
-    python eval.py cars --experiment_path $RUN_DIR $LIMIT \
+    python eval.py ${DATASET:-cars} --experiment_path $RUN_DIR $LIMIT \
         --sym_mode $MODE $EVAL_EXTRA --save_vis 3 --out_folder $RES/renders_$MODE \
         --scores_path $RES/scores_$MODE.json --per_view_path $RES/per_view_$MODE.txt
     cp scores.txt $RES/per_object_$MODE.txt

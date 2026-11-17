@@ -2,7 +2,7 @@
 # Train the stand-alone mirror-plane predictor on the cached SRN cars and score it on
 # validation cars and on test cars at the benchmark input view.
 # Run from the repo root:  mkdir -p out err && sbatch slurm/plane.sh
-# Options (env): STEPS (default 4000), ARCH (resnet18 | small), TAG (output folder name)
+# Options (env): STEPS (default 4000), ARCH (resnet18 | small), TAG (output folder name), CATS ("cars" or "cars chairs")
 #SBATCH --job-name=plane
 #SBATCH --partition=stud
 #SBATCH --gpus=1
@@ -25,5 +25,5 @@ echo "Job ${SLURM_JOB_ID} on $(hostname): plane predictor $TAG"
 nvidia-smi --query-gpu=name,memory.total --format=csv | head -2
 date
 python train_plane.py --out experiments_out/$TAG --arch ${ARCH:-resnet18} --steps ${STEPS:-4000} \
-    --workers 4 --test_cars ${TEST_CARS:-100}
+    --workers 4 --test_cars ${TEST_CARS:-100} --categories ${CATS:-cars}
 date
