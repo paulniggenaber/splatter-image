@@ -126,6 +126,7 @@ def main(ckpt_dir):
     assert net.plane_net[0].weight.grad.abs().sum() > 0
     trunk_grads = [p.grad for n, p in net.encoder.named_parameters() if p.grad is not None]
     assert all(g.abs().sum() == 0 for g in trunk_grads), "plane loss reached the U-Net"
+    assert not hasattr(net, "plane_head"), "plane_head would be unused (DDP error)"
     print("6 ok  plane_net gets gradients from the plane loss; the U-Net gets none")
     print("ALL MODEL TESTS PASSED")
 

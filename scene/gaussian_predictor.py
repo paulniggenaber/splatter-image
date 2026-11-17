@@ -483,13 +483,14 @@ class SingleImageSongUNetPredictor(nn.Module):
             nn.init.zeros_(self.sym_head.bias)
             nn.init.constant_(self.sym_head.bias[:1], cfg.model.symmetry.switch_bias)
             # plane: 4 numbers per image (normal, offset), from averaged features
-            self.plane_head = nn.Sequential(nn.Linear(cfg.model.base_dim, 64),
-                                            nn.SiLU(),
-                                            nn.Linear(64, 4))
+            self.use_plane_net = bool(cfg.model.symmetry.get("plane_net", False))
+            if not self.use_plane_net:
+                self.plane_head = nn.Sequential(nn.Linear(cfg.model.base_dim, 64),
+                                                nn.SiLU(),
+                                                nn.Linear(64, 4))
             # Optional: a separate small CNN that looks at the input photo only and
             # predicts the plane (keeps spatial layout, so it can tell the car's
             # orientation). Used instead of plane_head; not connected to the U-Net.
-            self.use_plane_net = bool(cfg.model.symmetry.get("plane_net", False))
             if self.use_plane_net:
                 self.plane_net = nn.Sequential(
                     nn.Conv2d(3, 32, 5, stride=2, padding=2), nn.SiLU(),
