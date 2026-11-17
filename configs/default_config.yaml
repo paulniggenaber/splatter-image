@@ -65,6 +65,7 @@ model:
     gt_plane_iters: 5000   # mirror with the TRUE plane for the first N training steps
     plane_detach: false    # plane head reads feat.detach(): plane loss cannot reach the U-Net trunk
     plane_net: false       # separate small CNN on the input photo predicts the plane
+    plane_predictor: null  # path to a plane_predictor.pth (train_plane.py): frozen, replaces the plane head
     near_side_only: false  # twins only for Gaussians on the camera's side of the plane
     plane_gate_deg: 0.0    # >0: keep training with the TRUE plane until the predicted plane's
                            # running angle error is below this many degrees (0 = off)

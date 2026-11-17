@@ -5,6 +5,8 @@
 # RUN_DIR  folder of the run (contains model_latest.pth and .hydra/)
 # MODES    model  = the model as it is (symmetry model: its own predicted plane)
 #          oracle = symmetry model mirroring with the TRUE plane (ablation)
+# EVAL_EXTRA  extra eval.py flags, e.g. "--plane_predictor experiments_out/plane1/plane_predictor.pth"
+# RES_NAME    results folder name (default: name of the run folder)
 # N        number of test cars (default: all 704, about 55 minutes per mode)
 # Results land in results/<name of the run>/.
 #SBATCH --job-name=eval
@@ -25,7 +27,7 @@ export PYTHONUNBUFFERED=1
 
 RUN_DIR=${RUN_DIR:?set RUN_DIR}
 MODES=${MODES:-model}
-RES=results/$(basename $RUN_DIR)
+RES=results/${RES_NAME:-$(basename $RUN_DIR)}
 mkdir -p $RES
 if [ -n "$N" ]; then LIMIT="--max_examples $N"; else LIMIT=""; fi
 
@@ -33,7 +35,7 @@ echo "Job ${SLURM_JOB_ID} on $(hostname): eval $RUN_DIR, modes: $MODES, N=${N:-a
 for MODE in $MODES; do
     echo "=== eval $MODE ==="; date
     python eval.py cars --experiment_path $RUN_DIR $LIMIT \
-        --sym_mode $MODE --save_vis 3 --out_folder $RES/renders_$MODE \
+        --sym_mode $MODE $EVAL_EXTRA --save_vis 3 --out_folder $RES/renders_$MODE \
         --scores_path $RES/scores_$MODE.json --per_view_path $RES/per_view_$MODE.txt
     cp scores.txt $RES/per_object_$MODE.txt
     cat $RES/scores_$MODE.json

@@ -484,7 +484,13 @@ class SingleImageSongUNetPredictor(nn.Module):
             nn.init.constant_(self.sym_head.bias[:1], cfg.model.symmetry.switch_bias)
             # plane: 4 numbers per image (normal, offset), from averaged features
             self.use_plane_net = bool(cfg.model.symmetry.get("plane_net", False))
-            if not self.use_plane_net:
+            plane_ckpt = cfg.model.symmetry.get("plane_predictor", None)
+            self._ext_plane = None
+            if plane_ckpt:
+                # stand-alone plane predictor (train_plane.py), frozen, outside the state dict
+                self.attach_plane_predictor(plane_ckpt)
+                self.use_plane_net = False
+            if not self.use_plane_net and self._ext_plane is None:
                 self.plane_head = nn.Sequential(nn.Linear(cfg.model.base_dim, 64),
                                                 nn.SiLU(),
                                                 nn.Linear(64, 4))
@@ -501,6 +507,16 @@ class SingleImageSongUNetPredictor(nn.Module):
                     nn.Linear(128 * 16, 256), nn.SiLU(), nn.Linear(256, 4))
 
     use_plane_net = False
+    _ext_plane = None
+
+    def attach_plane_predictor(self, path_or_model):
+        """Use a frozen stand-alone plane predictor (scene/plane_predictor.py) for the
+        mirror plane. Kept in a list so it is not part of this module's state dict."""
+        from scene.plane_predictor import load_predictor
+        p = load_predictor(path_or_model) if isinstance(path_or_model, str) else path_or_model
+        for q in p.parameters():
+            q.requires_grad_(False)
+        self._ext_plane = [p.eval()]
 
     def forward(self, x, film_camera_emb=None, N_views_xa=1):
         if not self.symmetry:
@@ -515,7 +531,12 @@ class SingleImageSongUNetPredictor(nn.Module):
                                N_views_xa=N_views_xa,
                                return_features=True)
         sym_out = self.sym_head(feat)                      # (B, 4, H, W): switch logit + colour correction
-        if self.use_plane_net:
+        if self._ext_plane is not None:
+            ext = self._ext_plane[0]
+            if next(ext.parameters()).device != x_in.device:
+                ext.to(x_in.device)
+            plane = ext(x_in[:, :3].float())                 # frozen stand-alone predictor, (B, 4)
+        elif self.use_plane_net:
             plane = self.plane_net(x_in[:, :3])             # separate CNN on the photo, (B, 4)
         else:
             plane_in = feat.detach() if self.plane_detach else feat   # detach: plane loss stays out of the trunk
