@@ -10,7 +10,7 @@ from einops import rearrange, repeat
 
 from utils.general_utils import matrix_to_quaternion, quaternion_raw_multiply
 from utils.graphics_utils import fov2focal
-from scene.symmetry import mirror_gaussians
+from scene.symmetry import mirror_gaussians, near_side_mask
 
 # U-Net implementation from EDM
 # Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -471,6 +471,7 @@ class SingleImageSongUNetPredictor(nn.Module):
         # 24 output channels, so the pretrained layers keep their shapes and
         # the released weights still load (the heads are simply "missing keys").
         self.symmetry = symmetry_enabled(cfg)
+        self.plane_detach = self.symmetry and bool(cfg.model.symmetry.get("plane_detach", False))
         if self.symmetry:
             # per pixel, 4 numbers for the twin of this pixel's Gaussian:
             #   channel 0   : switch = "does the twin exist?" (sigmoid later)
@@ -498,7 +499,8 @@ class SingleImageSongUNetPredictor(nn.Module):
                                N_views_xa=N_views_xa,
                                return_features=True)
         sym_out = self.sym_head(feat)                      # (B, 4, H, W): switch logit + colour correction
-        plane = self.plane_head(feat.mean(dim=(2, 3)))     # (B, 4)
+        plane_in = feat.detach() if self.plane_detach else feat   # detach: plane loss stays out of the trunk
+        plane = self.plane_head(plane_in.mean(dim=(2, 3)))  # (B, 4)
         return self.out(x), sym_out, plane
 
 def symmetry_enabled(cfg):
@@ -850,6 +852,9 @@ class GaussianSplatPredictor(nn.Module):
             if sym_switch_override is not None:
                 switch = torch.full_like(switch, float(sym_switch_override))
             plane_used = sym_plane_pred if sym_plane_override is None else sym_plane_override
+            if self.cfg.model.symmetry.get("near_side_only", False):
+                # twins only for Gaussians on the camera's side: they land on the hidden side
+                switch = switch * near_side_mask(out_dict["xyz"], plane_used)
             out_dict = mirror_gaussians(out_dict, plane_used, switch, self.transform_SHs,
                                         twin_dc_delta=twin_dc_delta)
             out_dict["sym_plane"] = sym_plane_pred       # (B, 4), for the plane loss

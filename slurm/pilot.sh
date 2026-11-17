@@ -4,6 +4,7 @@
 # run; it only shows which way the numbers move.
 #     sbatch --job-name=pilot_sym     --export=ALL,RUN=sym     slurm/pilot.sh
 #     sbatch --job-name=pilot_control --export=ALL,RUN=control slurm/pilot.sh
+# Another try without overwriting: TAG=sym2 EXTRA="model.symmetry.plane_detach=true"
 #SBATCH --partition=stud
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
@@ -24,8 +25,9 @@ export PYTHONUNBUFFERED=1
 RUN=${RUN:-sym}
 STEPS=${STEPS:-2000}
 CKPT=${CKPT:-$HOME/ckpt/cars}
-RUN_DIR=$PWD/experiments_out/pilot_$RUN
-RES=results/pilot_$RUN
+TAG=${TAG:-$RUN}                  # name of this pilot (folders pilot_<TAG>), e.g. TAG=sym2
+RUN_DIR=$PWD/experiments_out/pilot_$TAG
+RES=results/pilot_$TAG
 mkdir -p $RES
 
 if [ "$RUN" = "sym" ]; then
@@ -51,7 +53,7 @@ date
 
 for MODE in $MODES; do
     echo "=== eval $MODE ==="
-    python eval.py cars --experiment_path $RUN_DIR --max_examples 100 \
+    python eval.py cars --experiment_path $RUN_DIR --max_examples ${EVAL_N:-100} \
         --sym_mode $MODE --save_vis 3 --out_folder $RES/renders_$MODE \
         --scores_path $RES/scores_$MODE.json --per_view_path $RES/per_view_$MODE.txt
     cat $RES/scores_$MODE.json

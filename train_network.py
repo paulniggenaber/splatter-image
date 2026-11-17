@@ -180,6 +180,7 @@ def main(cfg: DictConfig):
     first_iter += 1
     iteration = first_iter
     last_log_time = None
+    plane_angle_ema = None   # running mean of the predicted plane angle error (for plane_gate_deg)
 
     for num_epoch in range((cfg.opt.iterations + 1 - first_iter)// len(dataloader) + 1):
         dataloader.sampler.set_epoch(num_epoch)        
@@ -202,7 +203,9 @@ def main(cfg: DictConfig):
                 input_images = data["gt_images"][:, :cfg.data.input_images, ...]
 
             sym_kwargs = {}
-            if use_symmetry and iteration <= cfg.model.symmetry.gt_plane_iters:
+            gate = float(cfg.model.symmetry.get("plane_gate_deg", 0.0)) if use_symmetry else 0.0
+            plane_not_ready = gate > 0 and (plane_angle_ema is None or plane_angle_ema > gate)
+            if use_symmetry and (iteration <= cfg.model.symmetry.gt_plane_iters or plane_not_ready):
                 # warm-up: mirror with the TRUE plane, so the twins are correct from
                 # step one while the plane head learns from the plane loss alone
                 sym_kwargs["sym_plane_override"] = data["sym_plane"]
@@ -273,6 +276,9 @@ def main(cfg: DictConfig):
             if use_symmetry:
                 # teach the plane head where the true mirror plane is
                 plane_loss_value = plane_loss(gaussian_splats["sym_plane"], data["sym_plane"])
+                with torch.no_grad():   # running mean of the plane angle error, for the gate
+                    a_now, _ = plane_errors(gaussian_splats["sym_plane"], data["sym_plane"])
+                    plane_angle_ema = a_now if plane_angle_ema is None else 0.98 * plane_angle_ema + 0.02 * a_now
                 total_loss = total_loss + cfg.opt.lambda_plane * plane_loss_value
 
             assert not total_loss.isnan(), "Found NaN loss!"
