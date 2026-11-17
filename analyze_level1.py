@@ -23,20 +23,21 @@ import matplotlib.pyplot as plt
 
 # Reference categorical palette (fixed order, never cycled); random = neutral gray control.
 STYLE = {
-    "contribution": dict(color="#2a78d6", label="Contribution (oracle)", marker="o"),
-    "opacity":      dict(color="#eb6834", label="Opacity", marker="s"),
-    "opacity_area": dict(color="#1baf7a", label="Opacity × area", marker="D"),
-    "error_sens":   dict(color="#eda100", label="Error sensitivity (oracle)", marker="^"),
-    "edge_opacity": dict(color="#e87ba4", label="Edge + opacity (PhGS-style)", marker="v"),
-    "learned":      dict(color="#6250d6", label="Learned head (ours)", marker="P"),
-    "merge":        dict(color="#008300", label="Merge b×b (ToMe-style)", marker="X"),
-    "random":       dict(color="#8a8984", label="Random", marker="."),
+    "contribution":          dict(color="#2a78d6", label="Contribution (oracle)", marker="o"),
+    "opacity":               dict(color="#eb6834", label="Opacity", marker="s"),
+    "opacity_area":          dict(color="#1baf7a", label="Opacity × area", marker="D"),
+    "contribution_iter_bal": dict(color="#eda100", label="Contribution, iterative + balanced (oracle)", marker="^"),
+    "hybrid":                dict(color="#e87ba4", label="Hybrid rank (opacity + opacity × area)", marker="v"),
+    "learned":               dict(color="#6250d6", label="Learned head (ours)", marker="P"),
+    "merge":                 dict(color="#008300", label="Merge b×b (ToMe-style)", marker="X"),
+    "random":                dict(color="#8a8984", label="Random", marker="."),
 }
-EXTRA_LABELS = {"scale": "Scale (volume)", "error_sens_signed": "Error sensitivity, signed (oracle)",
-                "hybrid": "Hybrid rank (opacity + opacity×area)",
+EXTRA_LABELS = {"scale": "Scale (volume)",
+                "error_sens": "Error sensitivity (oracle)",
+                "edge_opacity": "Edge + opacity (PhGS-style)", "error_sens_signed": "Error sensitivity, signed (oracle)",
                 "contribution_bal": "Contribution, angle-balanced",
                 "contribution_iter": "Contribution, iterative",
-                "contribution_iter_bal": "Contribution, iterative + balanced"}
+                "contribution_iter_bal": "Contribution, iterative + balanced (oracle)"}
 TEXT, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 ORDER = ["full", "random", "opacity", "scale", "opacity_area", "hybrid", "edge_opacity",
          "contribution", "contribution_bal", "contribution_iter", "contribution_iter_bal",
@@ -93,7 +94,7 @@ def latex_table(s, budgets, path):
     crits = [c for c in ORDER if c in set(s.criterion) and c not in ("full", "merge")]
     full = s[s.criterion == "full"].iloc[0]
     cols = "l" + "c" * len(budgets)
-    out = ["\\begin{table}[t]", "\\centering", "\\small",
+    out = ["\\begin{table*}[t]", "\\centering", "\\small",
            f"\\begin{{tabular}}{{{cols}}}", "\\toprule",
            "Criterion & " + " & ".join(f"{int(round(b * 100))}\\%" for b in budgets) + " \\\\",
            "\\midrule",
@@ -108,8 +109,9 @@ def latex_table(s, budgets, path):
                 cells.append("--"); continue
             v = r.psnr.iloc[0]
             txt = f"{v:.2f}"
-            cells.append(f"\\textbf{{{txt}}}" if np.isclose(v, best[b]) else txt)
+            cells.append(f"\\textbf{{{txt}}}" if txt == f"{best[b]:.2f}" else txt)
         name = STYLE.get(c, {}).get("label", EXTRA_LABELS.get(c, c.replace("_", " ")))
+        name = name.replace("×", "$\\times$")
         out.append(f"{name} & " + " & ".join(cells) + " \\\\")
     m = s[s.criterion == "merge"]
     if not m.empty:
@@ -119,7 +121,7 @@ def latex_table(s, budgets, path):
     out += ["\\bottomrule", "\\end{tabular}",
             "\\caption{Novel-view PSNR on SRN Cars (704 test objects) when keeping a fraction of the "
             "16{,}384 predicted Gaussians, for each selection criterion. Best per budget in bold.}",
-            "\\label{tab:level1}", "\\end{table}"]
+            "\\label{tab:level1}", "\\end{table*}"]
     open(path, "w").write("\n".join(out) + "\n")
 
 
@@ -183,8 +185,8 @@ def angle_table(views, budgets, bins):
     return t.sort_values(["criterion", "budget", "angle_mid"])
 
 
-def fig_angle(t, budget, path, crits=("opacity", "opacity_area", "contribution", "learned")):
-    fig, ax = plt.subplots(figsize=(3.4, 2.6))
+def fig_angle(t, budget, path, crits=("opacity", "opacity_area", "hybrid", "contribution", "learned")):
+    fig, ax = plt.subplots(figsize=(3.4, 3.0))
     ax.axhline(0, color=MUTED, linewidth=1, zorder=1)
     for c in crits:
         g = t[(t.criterion == c) & np.isclose(t.budget, budget)]
@@ -199,7 +201,7 @@ def fig_angle(t, budget, path, crits=("opacity", "opacity_area", "contribution",
     ax.set_ylabel(f"ΔPSNR vs full model (dB), {budget * 100:g}% kept", fontsize=8, color=TEXT)
     ax.set_xticks([45, 75, 105, 135, 165])
     style_axes(ax)
-    ax.legend(fontsize=7, frameon=False, loc="best")
+    ax.legend(fontsize=7, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=2)
     fig.tight_layout()
     for ext in ("pdf", "png"):
         fig.savefig(f"{path}.{ext}", dpi=200, bbox_inches="tight")

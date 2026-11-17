@@ -1,0 +1,21 @@
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccc}
+\toprule
+Head variant & Val.\ overlap@10\%$\uparrow$ & PSNR@10\%$\uparrow$ & LPIPS@10\%$\downarrow$ \\
+\midrule
+Reference (all inputs, ranking, 8k it.) & 0.577 & 20.98 & 0.110 \\
+\quad Gaussian parameters only & 0.589 & 20.97 & 0.111 \\
+\quad Input RGB only & 0.409 & 19.22 & 0.129 \\
+\quad MSE instead of ranking loss & 0.576 & 20.82 & 0.113 \\
+\quad Error-sensitivity target & 0.686$^\dagger$ & 18.02 & 0.126 \\
+\quad 20k iterations (final head) & 0.581 & 21.11 & 0.108 \\
+\midrule
+Opacity (no learning) & 0.494 & 19.91 & 0.113 \\
+\bottomrule
+\end{tabular}
+\caption{Ablations of the importance head. Validation overlap: fraction of the oracle's top-$10\%$ Gaussians recovered by the head's top-$10\%$, on 20 validation objects. PSNR/LPIPS on the 704 test objects at a $10\%$ budget. $^\dagger$Measured against the error-sensitivity oracle (opacity: $0.464$), not comparable to the other rows.}
+\label{tab:ablation}
+\end{table}

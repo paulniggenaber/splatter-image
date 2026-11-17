@@ -1,0 +1,29 @@
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+Criterion & 25\% & 10\% & 5\% & 2\% & 1\% \\
+\midrule
+Full model (100\%) & \multicolumn{5}{c}{23.96} \\
+\midrule
+Random & 20.50 & 17.37 & 15.71 & 14.47 & 14.02 \\
+Opacity & \textbf{23.96} & 19.91 & 17.07 & 15.07 & 14.37 \\
+Scale (volume) & 18.04 & 17.36 & 16.34 & 14.88 & 14.15 \\
+Opacity $\times$ area & 23.92 & 21.27 & \textbf{19.40} & \textbf{17.34} & 16.18 \\
+Hybrid rank (opacity + opacity $\times$ area) & 23.94 & \textbf{21.32} & 18.84 & 16.69 & 15.65 \\
+Edge + opacity (PhGS-style) & 23.76 & 17.10 & 15.91 & 14.81 & 14.28 \\
+Contribution (oracle) & \textbf{23.96} & 20.36 & 18.21 & 16.03 & 14.98 \\
+Contribution, angle-balanced & \textbf{23.96} & 20.41 & 18.13 & 16.01 & 14.99 \\
+Contribution, iterative & \textbf{23.96} & 20.48 & 19.06 & 17.24 & \textbf{16.30} \\
+Contribution, iterative + balanced (oracle) & \textbf{23.96} & 20.57 & 19.20 & 17.28 & \textbf{16.30} \\
+Error sensitivity (oracle) & 23.93 & 19.53 & 17.25 & 15.47 & 14.73 \\
+Error sensitivity, signed (oracle) & 21.28 & 20.46 & 17.85 & 15.77 & 14.91 \\
+\midrule
+Merge (keeps 25.00\%) & \multicolumn{5}{c}{23.25} \\
+Merge (keeps 6.25\%) & \multicolumn{5}{c}{21.39} \\
+\bottomrule
+\end{tabular}
+\caption{Novel-view PSNR on SRN Cars (704 test objects) when keeping a fraction of the 16{,}384 predicted Gaussians, for each selection criterion. Best per budget in bold.}
+\label{tab:level1}
+\end{table*}
