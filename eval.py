@@ -355,7 +355,7 @@ def main(dataset_name, experiment_path, device_idx, split='test', save_vis=0, ou
     print('Loaded model!')
     if getattr(args, "plane_predictor", None):
         # use a stand-alone plane predictor instead of the model's own plane head
-        model.network_with_offset.attach_plane_predictor(args.plane_predictor)
+        model.network_with_offset.attach_plane_predictor(args.plane_predictor, getattr(args, 'plane_radius', None))
         print("Using the plane predictor", args.plane_predictor)
 
     # override dataset in cfg if testing objaverse model
@@ -395,6 +395,8 @@ def parse_arguments():
                         help='Evaluate only the first N objects (default: all)')
     parser.add_argument('--per_view_path', type=str, default=None,
                         help='If set, write the mean PSNR per view index to this file')
+    parser.add_argument('--plane_radius', type=float, default=None,
+                        help='camera distance to the object centre for the plane offset (cars 1.3, chairs 2.0)')
     parser.add_argument('--plane_predictor', type=str, default=None,
                         help='Path to a plane_predictor.pth (train_plane.py): replaces the model plane')
     parser.add_argument('--scores_path', type=str, default=None,

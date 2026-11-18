@@ -488,7 +488,7 @@ class SingleImageSongUNetPredictor(nn.Module):
             self._ext_plane = None
             if plane_ckpt:
                 # stand-alone plane predictor (train_plane.py), frozen, outside the state dict
-                self.attach_plane_predictor(plane_ckpt)
+                self.attach_plane_predictor(plane_ckpt, cfg.model.symmetry.get("plane_radius", None))
                 self.use_plane_net = False
             if not self.use_plane_net and self._ext_plane is None:
                 self.plane_head = nn.Sequential(nn.Linear(cfg.model.base_dim, 64),
@@ -509,11 +509,13 @@ class SingleImageSongUNetPredictor(nn.Module):
     use_plane_net = False
     _ext_plane = None
 
-    def attach_plane_predictor(self, path_or_model):
+    def attach_plane_predictor(self, path_or_model, radius=None):
         """Use a frozen stand-alone plane predictor (scene/plane_predictor.py) for the
         mirror plane. Kept in a list so it is not part of this module's state dict."""
         from scene.plane_predictor import load_predictor
         p = load_predictor(path_or_model) if isinstance(path_or_model, str) else path_or_model
+        if radius is not None:
+            p.radius = float(radius)        # distance camera-object centre (cars 1.3, chairs 2.0)
         for q in p.parameters():
             q.requires_grad_(False)
         self._ext_plane = [p.eval()]
