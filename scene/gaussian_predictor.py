@@ -913,10 +913,12 @@ class GaussianSplatPredictor(nn.Module):
                 keep = torch.sigmoid(sym_out[:, :, 4:5])                  # (B, N, 1)
                 near = near_side_mask(out_dict["xyz"], plane_used)
                 out_dict["opacity"] = out_dict["opacity"] * (near + (1.0 - near) * keep)
-                out_dict["sym_keep_far"] = (((1.0 - near) * keep).sum(dim=(1, 2)) /
-                                             (1.0 - near).sum(dim=(1, 2)).clamp(min=1.0))   # (B,), logging
+                keep_far = (((1.0 - near) * keep).sum(dim=(1, 2)) /
+                            (1.0 - near).sum(dim=(1, 2)).clamp(min=1.0))    # (B,), for logging
             out_dict = mirror_gaussians(out_dict, plane_used, switch, self.transform_SHs,
                                         twin_dc_delta=twin_dc_delta)
+            if sym_out.shape[-1] > 4:
+                out_dict["sym_keep_far"] = keep_far      # added after mirroring (mirror_gaussians keeps only Gaussian keys)
             out_dict["sym_plane"] = sym_plane_pred       # (B, 4), for the plane loss
             out_dict["sym_switch"] = switch              # (B, N, 1), for logging / pictures
 
