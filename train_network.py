@@ -319,6 +319,8 @@ def main(cfg: DictConfig):
                         msg += " | plane loss {:.4f} angle err {:.1f} deg offset err {:.3f} | switch mean {:.3f}".format(
                             plane_loss_value.item(), angle_err, offset_err,
                             gaussian_splats["sym_switch"].mean().item())
+                        if "sym_keep_far" in gaussian_splats:
+                            msg += " | far keep {:.3f}".format(gaussian_splats["sym_keep_far"].mean().item())
                     print(msg, flush=True)
                     last_log_time = now
 

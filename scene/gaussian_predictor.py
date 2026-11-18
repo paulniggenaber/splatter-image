@@ -478,10 +478,16 @@ class SingleImageSongUNetPredictor(nn.Module):
             #   channels 1-3: colour correction added to the twin's base colour
             #                 (shape is symmetric, lighting is not)
             # Starts as: twins mostly off, colour copied unchanged.
-            self.sym_head = nn.Conv2d(cfg.model.base_dim, 4, kernel_size=1)
+            #   channel 4   : (only with far_gate) "keep" gate for the ORIGINAL Gaussians
+            #                 on the far side of the plane: lets the model delete them
+            #                 where the mirrored twin is better. Starts as keep = 0.98.
+            self.far_gate = bool(cfg.model.symmetry.get("far_gate", False))
+            self.sym_head = nn.Conv2d(cfg.model.base_dim, 5 if self.far_gate else 4, kernel_size=1)
             nn.init.zeros_(self.sym_head.weight)
             nn.init.zeros_(self.sym_head.bias)
             nn.init.constant_(self.sym_head.bias[:1], cfg.model.symmetry.switch_bias)
+            if self.far_gate:
+                nn.init.constant_(self.sym_head.bias[4:5], float(cfg.model.symmetry.get("far_gate_bias", 4.0)))
             # plane: 4 numbers per image (normal, offset), from averaged features
             self.use_plane_net = bool(cfg.model.symmetry.get("plane_net", False))
             plane_ckpt = cfg.model.symmetry.get("plane_predictor", None)
@@ -892,7 +898,7 @@ class GaussianSplatPredictor(nn.Module):
             assert activate_output, "Symmetry needs activated opacities"
             sym_out = self.flatten_vector(sym_out)                        # (B, N, 4)
             switch = torch.sigmoid(sym_out[:, :, :1])                     # (B, N, 1)
-            twin_dc_delta = sym_out[:, :, 1:].unsqueeze(2)                # (B, N, 1, 3)
+            twin_dc_delta = sym_out[:, :, 1:4].unsqueeze(2)               # (B, N, 1, 3)
             if sym_colour_off:
                 twin_dc_delta = torch.zeros_like(twin_dc_delta)
             if sym_switch_override is not None:
@@ -901,6 +907,14 @@ class GaussianSplatPredictor(nn.Module):
             if self.cfg.model.symmetry.get("near_side_only", False):
                 # twins only for Gaussians on the camera's side: they land on the hidden side
                 switch = switch * near_side_mask(out_dict["xyz"], plane_used)
+            if sym_out.shape[-1] > 4:
+                # far_gate: the original Gaussians on the far side of the plane are kept
+                # with probability "keep"; camera-side Gaussians are always kept
+                keep = torch.sigmoid(sym_out[:, :, 4:5])                  # (B, N, 1)
+                near = near_side_mask(out_dict["xyz"], plane_used)
+                out_dict["opacity"] = out_dict["opacity"] * (near + (1.0 - near) * keep)
+                out_dict["sym_keep_far"] = (((1.0 - near) * keep).sum(dim=(1, 2)) /
+                                             (1.0 - near).sum(dim=(1, 2)).clamp(min=1.0))   # (B,), logging
             out_dict = mirror_gaussians(out_dict, plane_used, switch, self.transform_SHs,
                                         twin_dc_delta=twin_dc_delta)
             out_dict["sym_plane"] = sym_plane_pred       # (B, 4), for the plane loss
