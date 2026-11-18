@@ -427,7 +427,10 @@ def main(cfg: DictConfig):
                 # save models - if the newest psnr is better than the best one,
                 # overwrite best_model. Always overwrite the latest model. 
                 if scores["PSNR_novel"] > best_PSNR:
-                    fnames_to_save.append("model_best.pth")
+                    if cfg.logging.get("save_best", False):
+                        # off by default: eval.py and resuming only use model_latest.pth,
+                        # and every copy costs 0.68 GB of the 50 GB quota
+                        fnames_to_save.append("model_best.pth")
                     best_PSNR = scores["PSNR_novel"]
                     print("\n[ITER {}] Saving new best checkpoint PSNR:{:.2f}".format(
                         iteration + 1, best_PSNR))
@@ -445,7 +448,17 @@ def main(cfg: DictConfig):
                     ckpt_save_dict["model_state_dict"] = ema.ema_model.state_dict()                  
                 else:
                     ckpt_save_dict["model_state_dict"] = gaussian_predictor.state_dict() 
-                torch.save(ckpt_save_dict, os.path.join(vis_dir, fname_to_save))
+                # write to a temporary file first, then swap it in: if the disk is full
+                # the save fails, but the previous checkpoint stays intact
+                final_path = os.path.join(vis_dir, fname_to_save)
+                tmp_path = final_path + ".tmp"
+                try:
+                    torch.save(ckpt_save_dict, tmp_path)
+                    os.replace(tmp_path, final_path)
+                except (OSError, RuntimeError) as e:
+                    print("Checkpoint {} NOT saved ({}); the previous one is kept".format(fname_to_save, e), flush=True)
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
 
             gaussian_predictor.train()
 
