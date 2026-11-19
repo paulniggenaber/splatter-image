@@ -369,6 +369,16 @@ def main(dataset_name, experiment_path, device_idx, split='test', save_vis=0, ou
         training_cfg.data.subset = args.max_examples
     # instantiate dataset loader
     dataset = get_dataset(training_cfg, split)
+    # optionally keep only / drop some objects by folder name (SRN), e.g. a broken test car
+    if (args.only_ids or args.exclude_ids) and hasattr(dataset, "intrins"):
+        obj = lambda p: os.path.basename(os.path.dirname(p))
+        if args.only_ids:
+            keep = set(args.only_ids.split(","))
+            dataset.intrins = [p for p in dataset.intrins if obj(p) in keep]
+        if args.exclude_ids:
+            drop = set(args.exclude_ids.split(","))
+            dataset.intrins = [p for p in dataset.intrins if obj(p) not in drop]
+        print("Objects after id filter:", len(dataset.intrins))
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False,
                             persistent_workers=True, pin_memory=True, num_workers=1)
 
@@ -396,6 +406,10 @@ def parse_arguments():
                         help='How symmetry is used, see evaluate_dataset (default: model = the model as it is)')
     parser.add_argument('--max_examples', type=int, default=None,
                         help='Evaluate only the first N objects (default: all)')
+    parser.add_argument('--only_ids', type=str, default=None,
+                        help='Comma-separated object folder names: evaluate only these')
+    parser.add_argument('--exclude_ids', type=str, default=None,
+                        help='Comma-separated object folder names to leave out (e.g. the empty test car)')
     parser.add_argument('--per_view_path', type=str, default=None,
                         help='If set, write the mean PSNR per view index to this file')
     parser.add_argument('--plane_radius', type=float, default=None,
