@@ -907,6 +907,10 @@ class GaussianSplatPredictor(nn.Module):
             if self.cfg.model.symmetry.get("near_side_only", False):
                 # twins only for Gaussians on the camera's side: they land on the hidden side
                 switch = switch * near_side_mask(out_dict["xyz"], plane_used)
+            if self.cfg.model.symmetry.get("replace_far", False):
+                # pure mirroring: the original Gaussians on the far side are removed,
+                # the hidden side is built only from twins of camera-side Gaussians
+                out_dict["opacity"] = out_dict["opacity"] * near_side_mask(out_dict["xyz"], plane_used)
             if sym_out.shape[-1] > 4:
                 # far_gate: the original Gaussians on the far side of the plane are kept
                 # with probability "keep"; camera-side Gaussians are always kept

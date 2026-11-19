@@ -70,6 +70,7 @@ model:
     near_side_only: false  # twins only for Gaussians on the camera's side of the plane
     far_gate: false        # learned keep-gate for the original Gaussians on the far side (pure mirroring where it helps)
     far_gate_bias: 4.0     # starts as keep = sigmoid(4) = 0.98
+    replace_far: false     # pure mirroring: drop far-side originals, hidden side only from twins
     plane_gate_deg: 0.0    # >0: keep training with the TRUE plane until the predicted plane's
                            # running angle error is below this many degrees (0 = off)
 
