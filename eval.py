@@ -62,7 +62,10 @@ def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folde
 
         os.makedirs(out_folder, exist_ok=True)
 
-    with open("scores.txt", "w+") as f:
+    # Per-object scores go to a job-specific file, so evaluations running at the
+    # same time in the same folder do not overwrite each other's file.
+    per_object_file = os.environ.get("PER_OBJECT_PATH", "scores.txt")
+    with open(per_object_file, "w+") as f:
         f.write("")
 
     bg_color = [1, 1, 1] if model_cfg.data.white_background else [0, 0, 0]
@@ -200,7 +203,7 @@ def evaluate_dataset(model, dataloader, device, model_cfg, save_vis=0, out_folde
         ssim_all_examples_novel.append(sum(ssim_all_renders_novel) / len(ssim_all_renders_novel))
         lpips_all_examples_novel.append(sum(lpips_all_renders_novel) / len(lpips_all_renders_novel))
 
-        with open("scores.txt", "a+") as f:
+        with open(per_object_file, "a+") as f:
             f.write("{}_".format(d_idx) + example_id + \
                     " " + str(psnr_all_examples_novel[-1]) + \
                     " " + str(ssim_all_examples_novel[-1]) + \
