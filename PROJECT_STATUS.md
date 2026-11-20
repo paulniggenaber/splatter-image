@@ -1,115 +1,119 @@
-# Project status — "How many Gaussians are really needed?"
+# Project status — "How many Gaussians are really needed?" (Taya's part)
 
-*Last update: 17 November. Start here. Everything important is linked from this file.*
+*Last update: 20 November. Start here. This branch (`taya/dev`) holds the budget / compactness part of the project; Paul's symmetry part is on `paul/dev` (`reports/symmetry-results.md`).*
 
 ## The idea in three sentences
 
-Splatter Image predicts one 3D Gaussian per input pixel, so every object gets 16,384 Gaussians, and 74 % of them are nearly transparent. We study **how many Gaussians are actually needed and which ones**, from 25 % down to 1 % of the Gaussians, and analyse everything per viewpoint (angle between the input and target camera). On top of training-free criteria we train our own components: a learned importance head (Level 2), budget-aware fine-tuning (Level 3) and viewpoint-robust fine-tuning (Level 3b).
-
-Full plan, research questions, day-by-day schedule and risks: [`docs/project_plan_v2.md`](docs/project_plan_v2.md) (the original proposal is [`docs/project_overview.md`](docs/project_overview.md)).
+Splatter Image predicts one 3D Gaussian per input pixel, so every object gets 16,384 Gaussians, and 74 % of them are nearly transparent. We study **how many Gaussians are actually needed and which ones** (25 % down to 1 %), analyse everything per viewpoint, and then **train the model to work with a fixed budget of Gaussians** (budget-aware fine-tuning, a hard-constraint form of training for sparsity). Together with Paul's symmetry extension this gives one story: the one-Gaussian-per-pixel design wastes Gaussians (→ compactness, this branch) and guesses the hidden side poorly (→ symmetry, Paul).
 
 ## Where we are
 
-| Part | Status | Main result |
+| Part | Status | Main result (SRN Cars, 703 test cars) |
 |---|---|---|
-| Baseline reproduction | ✅ done | PSNR 23.999 / SSIM 0.923 / LPIPS 0.077 on 704 test cars (paper: 24.00 / 0.92 / 0.078) — see [`REPRODUCTION.md`](REPRODUCTION.md) |
-| Viewpoint analysis of the full model | ✅ done (176,000 views) | U-shaped: worst at side views 90–120° (23.17 dB), better at 150–180° (25.14 dB) |
-| **Level 1** — training-free selection, 12 criteria + merging, 704 cars | ✅ done | 25 % is free (−0.004 dB); at 10 % the free **hybrid** rank is best (21.32 dB vs 19.91 for opacity) |
-| **Level 2** — learned importance head + ablations, 704 cars | ✅ done | head beats its teacher oracle (+0.75 dB at 10 %), 60× faster, but not the best free rules |
-| Cost: storage | ✅ done (computed) | 1.51 MB → 0.38 MB (25 %) → 0.15 MB (10 %) per object |
-| Cost: rendering time, 360° video | ⏳ to do | needs `benchmark_cost.py` (not written yet) |
-| **Level 3** — budget-aware fine-tuning | ⏳ to do | patch for `train_network.py` described in plan §3 |
-| **Level 3b** — viewpoint-robust fine-tuning (Group DRO over angle bins) | ⏳ to do | plan §9; shares the patch and the control run with Level 3 |
-| SRN Chairs (evaluation only), demos (360° comparison video) | ⏳ to do | plan §8 |
-| Paper (CVPR 2026 template) | ✍️ in progress | live version in Overleaf; snapshot in [`paper/cvpr_paper/`](paper/cvpr_paper/) |
+| Baseline reproduction | ✅ | 23.999 / 0.923 / 0.077 on the official protocol (paper: 24.00 / 0.92 / 0.078) |
+| Viewpoint analysis of the full model | ✅ | U-shape: side views (90–120°) worst, opposite views (150–180°) better → symmetry |
+| **Level 1** — training-free selection, 12 criteria + merging | ✅ | 25 % is free (−0.004 dB); at 10 % the free **hybrid** rank is best |
+| **Level 2** — learned importance head + ablations | ✅ | head beats its teacher oracle (+0.75 dB at 10 %), 60× faster; Gaussian parameters alone suffice |
+| **Level 3** — budget-aware fine-tuning | ✅ | **10 % of the Gaussians at -0.74 dB** (post-hoc best: -2.64 dB) |
+| Level 3 — any-budget model (one model, nested budgets) | ✅ | close to the specialists at every budget; −0.43 dB at 100 % |
+| Level 3b — Group DRO over viewpoints | ✅ (negative) | no effect: training losses barely depend on the angle |
+| Cost benchmark + 360° video | ✅ | 10× less storage, ~2× less render memory at 512²; **no real speed-up** (render ~2 ms, overhead-bound) |
+| **Combination with Paul's symmetry** | ⏳ code ready | budget fine-tuning starting from Paul's `sym_long` model (see "Next steps") |
+| SRN Chairs | ⏳ not started | evaluation only |
+| Report (CVPR template, 6 pages) / slides (24 Nov) / poster (1 Dec) | ✍️ | report deadline 5 Dec |
+
+## Evaluation protocol (read before comparing numbers)
+
+- **703 test cars**: car 375 (`876d92ce6a0e4bf399588eee976baae`) is blank in all 251 images and is excluded (same as in Paul's report). `analyze_level1.py` drops it automatically.
+- **25 evaluation views per object** (odd novel views, evenly spaced); even views are used only by the oracle scores → no test leakage. Paul's tables use all 250 views (official `eval.py`), so absolute numbers differ slightly (full model 23.90 here vs 23.93 there); **differences between methods are comparable**.
+- Paired per-object differences with 95 % CIs; masked PSNR (object pixels only) also reported.
 
 ## Key results
 
-### Level 1 + Level 2, SRN Cars, 704 test objects (25 evaluation views each)
+### Level 1 + 2: which Gaussians to keep (original model, no training of the reconstructor)
 
 | Criterion | PSNR @10 % ↑ | LPIPS @10 % ↓ | PSNR @5 % | PSNR @1 % | worst angle bin @10 % | selection |
 |---|---:|---:|---:|---:|---:|---:|
-| Full model (100 %) | 23.96 | 0.076 | — | — | — | — |
-| Random | 17.37 | 0.181 | 15.71 | 14.02 | −11.1 dB | 0.2 ms |
-| Opacity | 19.91 | 0.113 | 17.08 | 14.37 | −5.7 dB | 0.1 ms |
-| Opacity × area | 21.27 | 0.113 | **19.40** | 16.18 | −6.8 dB | 0.3 ms |
-| **Hybrid rank** (opacity + opacity × area) | **21.32** | **0.106** | 18.84 | 15.65 | **−5.0 dB** | 0.7 ms |
-| Edge + opacity (PhGS-style) | 17.10 | 0.144 | 15.91 | 14.28 | −8.0 dB | 0.4 ms |
-| Contribution oracle | 20.36 | 0.108 | 18.21 | 14.98 | −11.0 dB | 30 ms |
-| Contribution, iterative + angle-balanced | 20.57 | 0.106 | 19.20 | **16.30** | −9.1 dB | 130 ms |
-| Error-sensitivity oracle | 19.53 | 0.116 | 17.25 | 14.73 | −8.9 dB | 28 ms |
-| Merge 4×4 (keeps 6.25 %) | 21.39 | 0.176 | — | — | — | 72 ms |
-| **Learned head (ours, Level 2)** | 21.11 | 0.108 | 18.78 | 15.97 | −5.7 dB | 0.5 ms |
+| Full model (100 %) | 23.90 | 0.076 | — | — | — | — |
+| Random | 17.29 | 0.181 | 15.63 | 13.94 | -11.1 dB | 0.2 ms |
+| Opacity | 19.84 | 0.113 | 17.00 | 14.29 | -5.7 dB | 0.1 ms |
+| Opacity × area | 21.20 | 0.113 | 19.32 | 16.10 | -6.8 dB | 0.3 ms |
+| **Hybrid rank** (opacity + opacity × area) | 21.25 | 0.106 | 18.77 | 15.57 | -5.0 dB | 1.5 ms |
+| Edge + opacity (PhGS-style) | 17.02 | 0.144 | 15.83 | 14.20 | -8.0 dB | 0.4 ms |
+| Contribution oracle | 20.29 | 0.108 | 18.13 | 14.90 | -11.0 dB | 26.9 ms |
+| Contribution, iterative + angle-balanced | 20.50 | 0.106 | 19.12 | 16.22 | -9.1 dB | 129.7 ms |
+| Error-sensitivity oracle | 19.46 | 0.117 | 17.17 | 14.65 | -9.0 dB | 27.8 ms |
+| Merge 4×4 (keeps 6.25 %) | 21.34 | 0.176 | — | — | — | 72 ms |
+| **Learned head (Level 2)** | 21.04 | 0.108 | 18.71 | 15.89 | — | 0.5 ms |
 
-Takeaways:
-1. **75 % of the Gaussians are free** (−0.004 ± 0.001 dB with opacity or contribution).
-2. **Cheap rules rival the oracles in PSNR**; the oracles are better in LPIPS. Iterative re-scoring improves the oracle by +1 dB at 5 % (accounts for redundant, overlapping Gaussians).
-3. **Importance depends on the viewpoint**: the oracles collapse on views close to the input camera (−11 dB at 30–60°) because few test views lie there; the hybrid rank is the most robust.
-4. **PhGS-style edge prior ≈ random** for objects on a white background.
-5. **Merging** gives the best PSNR at 6.25 % but is blurry (worst LPIPS).
-6. **Learned head** (Level 2): beats its teacher (+0.75 dB at 10 %, +1 dB at 1–2 %), matches its LPIPS, 60× faster, no renders. Does not beat the free hybrid rank.
+- **75 % of the Gaussians are free.** Below 25 %, cheap rules beat the expensive oracles in PSNR; the oracles are better in LPIPS; iterative re-scoring helps the oracle at small budgets.
+- **Importance depends on the viewpoint**: the oracles collapse near the input view (−11 dB at 30–60°) because few test views lie there; the hybrid rank is the most robust.
+- **Edge prior (PhGS-style) ≈ random** on objects; **merging** has good PSNR but is blurry.
+- **Learned head**: beats its teacher, matches its LPIPS, 0.5 ms, no renders. Ablations (validation overlap with the oracle / test PSNR@10 %): Gaussian parameters only ≈ all inputs; RGB only < opacity; ranking ≈ MSE; error-sensitivity target is a bad teacher.
 
-### Level 2 ablations (validation overlap with the oracle's top-10 %, and test PSNR @10 %)
+### Level 3: budget-aware fine-tuning (the main result)
 
-| Head variant | val overlap@10 % | PSNR @10 % | LPIPS @10 % |
-|---|---:|---:|---:|
-| Reference (all inputs, ranking loss, 8k it.) | 0.577 | 20.98 | 0.110 |
-| Gaussian parameters only | 0.589 | 20.97 | 0.111 |
-| Input RGB only | 0.409 | 19.22 | 0.129 |
-| MSE instead of ranking loss | 0.576 | 20.82 | 0.113 |
-| Error-sensitivity target | 0.686* | 18.02 | 0.126 |
-| 20k iterations (final head `head_A`) | 0.581 | 21.11 | 0.108 |
-| Opacity (no learning) | 0.494 | 19.91 | 0.113 |
+Same number of Gaussians in every column (hybrid rank, or the learned mask where stated); 100 % = no pruning.
 
-\*measured against its own oracle (opacity: 0.464), not comparable. → **The predicted Gaussian parameters are enough; the image alone is not.** Loss and training length barely matter. lr = 1e-3 was chosen on the validation split (3e-4 / 1e-3 / 3e-3).
+| Model | 2 % | 5 % | 10 % | 20 % | 100 % |
+|---|---:|---:|---:|---:|---:|
+| Original model + hybrid (post-hoc) | 16.62 | 18.77 | 21.25 | 23.56 | 23.90 |
+| Control fine-tune (no budget) + hybrid | — | 18.73 | 21.18 | — | 23.88 |
+| Fine-tuned for 10 %, learned mask | — | 21.09 | 22.92 | 22.70 | 22.58 |
+| **Fine-tuned for 10 %, hybrid mask** | — | 21.31 | 23.16 | 22.90 | 22.71 |
+| **Fine-tuned for 5 %, hybrid mask** | 19.80 | 22.05 | 22.18 | — | 21.22 |
+| **Fine-tuned for any budget** (random k ∈ {5,10,20,100} %) | 19.32 | 21.80 | 22.95 | 23.44 | 23.47 |
 
-Full numbers: [`results_summary/level1/summary.md`](results_summary/level1/summary.md), [`results_summary/level1/angle_delta.md`](results_summary/level1/angle_delta.md), [`results_summary/level2/summary.md`](results_summary/level2/summary.md). Figures: [`results_summary/fig_budget.png`](results_summary/fig_budget.png), [`results_summary/fig_angle.png`](results_summary/fig_angle.png).
+- **Fine-tuning for the budget, not extra training, is what helps**: the control fine-tune changes nothing (−0.02 dB).
+- **FT-10 (hybrid mask): 23.16 dB with 10 % of the Gaussians, +1.91 ± 0.08 dB over post-hoc hybrid** at the same count; **FT-5: +3.29 ± 0.11 dB** at 5 %.
+- **The fixed hybrid mask beats the learned mask** (stable target → easier to adapt to).
+- **Specialists overfit their budget** (FT-10 at 20 % / 100 % is below the original); the **any-budget model** fixes this almost completely, and its Gaussians are nested (take the first 2 / 5 / 10 / 20 %). It also became sparse by itself: same PSNR at 25 % and 100 %.
+- **All viewpoints improve**, most near the input view: at 10 %, worst angle bin −5.04 → −1.77 dB.
+- **Level 3b (Group DRO over 30° angle bins)**: identical to the control (bin weights stay ≈ 1 because training losses barely depend on the angle; the side-view difficulty is a generalisation effect). Honest negative result, consistent with Sagawa et al. (2020).
 
-![quality vs budget](results_summary/fig_budget.png)
+### Cost (full A100, 10 cars)
 
-## Files in this branch
+Storage 1.51 → 0.15 MB per object at 10 %; peak render memory at 512² 16.5 → 9.2 MB; render time ~1.6–2.1 ms per frame at 128²–512² for every variant (≤1.3× speed-up); U-Net forward 24 ms dominates. See `results_summary/cost/`, plus the side-by-side 360° video and the image strip.
+
+![Level 3](results_summary/figures/fig_level3_final.png)
+
+## Files
 
 | File | What it does |
 |---|---|
-| `importance.py` | all selection criteria (opacity, opacity × area, hybrid, edge, contribution / iterative / angle-balanced oracle, error sensitivity), 2×2/4×4 merging, the importance head, ranking loss, straight-through top-k mask (for Level 3) |
-| `eval_budget.py` | evaluates any set of criteria × budgets in ONE pass over the test set; odd views = evaluation, even views = oracle scoring (no leakage); writes `<out>_objects.csv` and `<out>_views.csv` (per view, with angle) |
-| `train_head.py` | Level 2: trains the head on the frozen model, oracle targets computed on the fly; flags `--target`, `--inputs`, `--loss`, `--lr`, `--steps` |
-| `analyze_level1.py` | merges CSV parts, removes empty-GT views, paired deltas ± 95 % CI, angle tables, LaTeX table, figures |
-| `budget_eval.sbatch` | Level 1 on 704 cars, split into 4 array jobs |
-| `eval_viewpoint_gap.py`, `eval_pruning.py` | earlier scripts (viewpoint analysis of the full model, first opacity pruning) |
-| `docs/` | project overview and the current plan (incl. Level 3b and literature) |
-| `results_summary/` | small summaries, tables and figures (raw CSVs are ~150 MB and stay on the cluster / Mac) |
-| `paper/cvpr_paper/` | snapshot of the LaTeX paper (the live version is in Overleaf) |
+| `importance.py` | selection criteria (opacity, opacity × area, hybrid, edge, contribution / iterative / balanced oracle, error sensitivity), merging, importance head, ranking loss, straight-through top-k mask, helpers for the **symmetric model** (originals + twins) |
+| `eval_budget.py` | evaluates criteria × budgets in one pass (`--experiment_path`, `--ckpt` for fine-tuned / symmetric models) |
+| `train_head.py` | Level 2: trains the importance head on the frozen model |
+| `finetune_budget.py` | Level 3 / 3b: `--mask none|learned|hybrid`, `--keep`, `--keep_choices` (any-budget), `--view_weighting dro|fixed`, `--init_path` (start from e.g. Paul's `sym_long`); warm-up, EMA, cosine lr, cached validation, resume |
+| `benchmark_cost.py` | render time / memory at 128²–512², 100-frame 360° timing, side-by-side video and image strip |
+| `analyze_level1.py` | merges CSVs, drops blank objects / empty views, paired deltas ± 95 % CI, angle tables, LaTeX tables, figures |
+| `*.sbatch` | Slurm jobs (`finetune_sym.sbatch` runs from a checkout of `paul/dev`) |
+| `results_summary/` | final tables (LaTeX + CSV/MD), figures, cost table, video — all on 703 cars |
+| `docs/` | project plan (incl. Level 3b and literature) |
 
-## How to run (cluster)
+## How to reproduce (cluster)
 
 ```bash
-# Level 1: all criteria x budgets on 704 test cars (4 jobs, ~1-2 h each)
+# Level 1 (all criteria x budgets on the test set)
 sbatch budget_eval.sbatch
-# quick test on 3 objects
-python eval_budget.py cars --max_objects 3 --out results/smoke
-
-# Level 2: train a head (~6 steps/s with 5 workers; 20k steps ~ 1 h)
-python train_head.py cars --num_workers 5 --steps 20000 --lr 1e-3 --target contribution --out runs/head_A
-# evaluate it on the test set
-python eval_budget.py cars --num_workers 3 --criteria opacity opacity_area hybrid contribution learned \
-    --head_ckpt runs/head_A/head.pth --out results/test_head_A
-
-# analysis (on a laptop, needs pandas + matplotlib)
+# Level 2 (importance head)
+python train_head.py cars --num_workers 5 --steps 20000 --lr 1e-3 --out runs/head_A
+# Level 3 (10 h each; best checkpoint by validation)
+sbatch --export=ALL,ARGS="--mask hybrid --keep 0.10 --lr 5e-6 --hours 10 --out runs/ft10_hybrid" finetune.sbatch
+sbatch --export=ALL,ARGS="--mask hybrid --keep 0.05 --lr 5e-6 --max_iters 6000 --decay cosine --out runs/ft5_hybrid" finetune.sbatch
+sbatch --export=ALL,ARGS="--mask hybrid --keep_choices 0.05 0.1 0.2 1.0 --lr 5e-6 --max_iters 12000 --decay cosine --out runs/ft_anybudget" finetune.sbatch
+# evaluation of a fine-tuned model
+python eval_budget.py cars --experiment_path runs/ft10_hybrid --ckpt model_best.pth --criteria opacity hybrid --budgets 0.2 0.1 0.05 --out results/test_ft10_hybrid
+# cost benchmark + video (full A100)
+sbatch bench.sbatch
+# analysis on a laptop
 python analyze_level1.py results/budget_full_part --out results/analysis
 ```
 
-### Cluster gotchas we hit (so you don't)
-- **`SHAPENET_DATASET_ROOT`** in `datasets/srn.py` must point to the folder that contains `srn_cars/` (absolute path, no `~`).
-- **Lazy dataset imports** (`datasets/dataset_factory.py`, committed) — otherwise CO3D/NMR asserts fail.
-- **New rasterizer API** (dr_aa branch): `gaussian_renderer/__init__.py` needs `antialiasing=False` and `rendered_image, radii, *_ = rasterizer(...)`.
-- **RAM leak**: `SRNDataset` caches every image it loads → OOM after a few hundred objects. Our scripts free the cache per object (`FreeCacheDataset`).
-- **BeeGFS is slow per file** → use `--num_workers` (data loading is the bottleneck, not the GPU).
-- **Slurm limits on `stud`**: max 2 running and 4 submitted jobs per user, and a per-user CPU cap; `3g.40gb` slices are usually free, `4g.40gb` often are not. Don't keep an interactive `srun` shell open while jobs wait.
-
 ## Next steps
 
-1. **Level 3 + 3b**: one patch of `train_network.py` with `--budget_keep` and `--view_weighting {none,fixed,dro}`; launch 4 fine-tunes in parallel (control · budget 10 % · Group DRO angles · budget 5 % or fixed weights), ~20 h each.
-2. **Cost benchmark + 360° comparison video** (`benchmark_cost.py`, one script for both; full A100 `7g.80gb`).
-3. **SRN Chairs** (evaluation only) — tests whether the viewpoint findings depend on car symmetry.
-4. Paper: Level 3 results, Cost (rendering time), Conclusion.
+1. **Combination with symmetry (needs from Paul: `experiments_out/sym_long/` with `.hydra/config.yaml` + model, and the plane-predictor checkpoint):**
+   - A (no training): Paul's symmetric model + hybrid on the *stored originals* (twins follow) at 20 / 10 / 5 %;
+   - B (training, ~4 h each): budget fine-tuning starting from `sym_long` — `--init_path runs/sym_long --keep 0.10` and the any-budget version. Clean 2×2: {original, symmetric} × {post-hoc, budget fine-tuning}. Question: does storing 10 % + the plane come close to the full original model?
+2. Merge `taya/dev` and `paul/dev` into `main`; clean repository structure and README (course checklist).
+3. Report (6 pages: Abstract, Intro, Related Work, Methodology, **Datasets**, Experiments & Results, Conclusions; GitHub link at the end of the abstract), slides for 24 Nov, poster for 1 Dec.

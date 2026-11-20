@@ -12,8 +12,9 @@
 - Paper (CVPR 2026 template, `cvpr_paper/`): Abstract, Intro, Related Work, Preliminaries, Method, Setup written; Results for Level 1 written with real numbers, table and two figures.
 
 **Running / next**
-- Test evaluation of the heads (`results/test_*`) → write Level 2 results.
-- Level 3 (budget-aware fine-tuning) — not started; patch for `train_network.py` described in §3.
+- ✅ Test evaluation of the heads done; Level 2 results written in the paper (head beats its teacher by +0.75 dB at 10 %, not the free hybrid rank).
+- ⏳ Cost: storage + selection time done; rendering time / 360° video still needs `benchmark_cost.py`.
+- **Level 3 (18 Nov): `finetune_budget.py` + `finetune.sbatch` written and CPU-tested.** Next: smoke test + lr check, then 4 runs on Taya's account (control, FT-10 learned, FT-10 hybrid, Group DRO) — see §3.
 - Demos (§8), SRN Chairs (evaluation only), cost table.
 - **Level 3b (new):** viewpoint-robust fine-tuning with Group DRO over angle bins (§9) — same patch and control run as Level 3.
 
@@ -95,34 +96,42 @@ No leakage: oracle scores use even-indexed test views, metrics use odd-indexed o
 - Monitored: top-10 % / top-5 % overlap with the oracle on 20 val objects, vs opacity's overlap.
 - Test-time cost: one forward of the head (<1 ms), no renders, no GT.
 
-### Level 3: budget-aware fine-tuning (main trained contribution)
+### Level 3: budget-aware fine-tuning (main trained contribution) — updated 18 Nov
 
-At every training step, for keep-fraction k:
+**Idea.** Post-hoc selection (Levels 1–2) cannot change the Gaussians that are kept: they were predicted for the full set. Level 3 fine-tunes Splatter Image so that it reconstructs well *given* that only k % of its Gaussians will be kept. This is the only part of the project that changes the model itself; if it beats the best Level-1 result at the same number of Gaussians (hybrid, 21.32 dB at 10 %), it is the main result of the paper.
 
-```
-logits = head(make_input(input_image, gaussians))         # head initialised from Level 2
-mask   = straight_through_topk_mask(logits, k)            # forward: exact top-k; backward: sigmoid
-gaussians["opacity"] = gaussians["opacity"] * mask[..., None]
-→ render the 3 target views → L2 + λ·LPIPS → update decoder AND head
-```
+**How (script `finetune_budget.py`, not a patch of `train_network.py`).** Every step: the model predicts 16 384 Gaussians → a top-k mask keeps k % (forward: exact top-k, as at test time; backward: straight-through through a sigmoid for the learned mask) → render the target views from the kept Gaussians only → original Splatter Image loss (L2 + 0.01·LPIPS) → update the decoder (and the head). Starts from the released cars checkpoint; lr 5e-6 (stage-2 lr) unless the lr check says otherwise.
+Why a separate script: `train_network.py` validates on all 352 val objects (~1 h), logs to wandb and keeps an EMA with β = 0.9999 (updated every 10 steps), which barely moves during a short fine-tune, so the fine-tuning would be invisible. `finetune_budget.py`: no EMA, cached validation on 20 val objects every 1000 it (full PSNR, masked PSNR, PSNR per angle bin), resume after a time limit, `FreeCacheDataset` + parallel loading, outputs readable by `eval_budget.py --experiment_path ... --ckpt model_best.pth`.
+Head initialisation: `runs/abl_reference/head.pth` (already on Taya's account; same configuration as `head_A`, 8k instead of 20k it., test 20.98 vs 21.11 dB — irrelevant as the head is fine-tuned anyway).
 
-The forward pass is exactly what happens at test time (k·N Gaussians), so there is no train/test mismatch. The decoder learns to put the information into the kept Gaussians, and the head learns which ones to keep.
+**Runs — Taya's account only (2 running + 2 queued), 10 h each, two waves ≈ 20–22 h in total.**
 
-Runs (3 MIG slices in parallel, start from the released cars checkpoint, same schedule for all):
+| # | Run | Command flags | What we want to see |
+|---|---|---|---|
+| 1 | **Control** | `--mask none` | how much "just more training" gives → the **zero line** for runs 2–4 |
+| 2 | **FT-10, learned head** | `--mask learned --keep 0.10` | **main result**: at 1 638 Gaussians, clearly above the control pruned with hybrid and above 21.32 dB → training for the budget beats post-hoc pruning |
+| 3 | **FT-10, hybrid mask** | `--mask hybrid --keep 0.10` | vs run 2: if 2 ≈ 3, the gain comes from the decoder adapting and a simple rule is enough; if 2 > 3, learned selection matters |
+| 4 | **Group DRO over angle bins** (Level 3b) | `--mask none --view_weighting dro` | per angle bin vs the control at 100 %: the worst bin (90–120°) goes up while the average barely drops |
 
-| Run | Mask | Purpose |
-|---|---|---|
-| FT-ctrl | none | control: is the gain just "more training"? |
-| FT-10 | k = 10 % | main |
-| FT-5 | k = 5 % | main, harder |
+Wave 1 = runs 1 + 2, wave 2 = runs 3 + 4 (submitted at once; they start automatically). Second wave if time is left: FT-5, fixed angle weights, random budget per step.
 
-Schedule: lr 5e-6 (the stage-2 lr), L2 + 0.01·LPIPS, as many iterations as fit in ~20 h (measure it/s in the first hour; probably 30–60 k). Evaluate every run with `eval_budget.py --experiment_path ... --criteria opacity learned`.
+**Before launching: smoke test + lr check (≈ 1 h, mandatory).**
+1. `--mask learned --keep 0.10 --max_iters 200 --val_every 100` — runs end to end, prints it/s and the validation line.
+2. lr check: 1000 it with `--lr 5e-6` and with `--lr 2e-5` (mask 10 %); compare the masked val PSNR. If it barely moves with 5e-6, use 2e-5 for all runs (the same lr for all runs, including the control).
 
-**Patch for `train_network.py`** (3 places):
-1. After the optimizer is built (line ~68): create `head = ImportanceHead()`, load `runs/head_A/head.pth`, add `{'params': head.parameters(), 'lr': 1e-4}` to the param list `l` *before* `torch.optim.Adam(l, ...)`, and pass the head through `fabric.setup` as well.
-2. Right after `gaussian_splats = gaussian_predictor(...)` (line ~184): the 3 lines above, guarded by `if cfg.opt.get("budget_keep", None):`.
-3. Save `head.state_dict()` next to `model_latest.pth` in the checkpoint block.
-Launch with `+opt.budget_keep=0.10 opt.pretrained_ckpt=<dir with model_latest.pth>`. The HF file is called `model_cars.pth`, so make a folder with a copy/symlink named `model_latest.pth`.
+**Evaluation (704 test cars, same protocol as Level 1).**
+- FT-10 models at **5 %, 10 %, 20 %** (does the model only fit one budget, or does it become more compact in general?) — `eval_budget.py --experiment_path runs/<run> --ckpt model_best.pth --criteria opacity hybrid learned --head_ckpt runs/<run>/head_best.pth --budgets 0.2 0.1 0.05`.
+- Control and DRO at 100 % and with hybrid at 10 % / 5 %.
+- Per-angle tables for every model (`analyze_level1.py`), so Level 3 connects to the viewpoint findings and to Level 3b.
+
+**Strengthening (no extra training runs, only evaluation/analysis).**
+1. lr check (above) — the main protection against "nothing changed".
+2. Evaluate FT-10 at 5 / 10 / 20 %.
+3. **How did the model adapt?** Compare opacity / scale distributions of the kept Gaussians (and of the discarded ones) between FT-10 and the original model: e.g. kept Gaussians became larger and more opaque, the others even more transparent. Gives the paper an explanation, not only a number.
+4. Angle breakdown for all fine-tuned models.
+5. Second wave, optional: one model with a **random budget per step** (k ∈ {5, 10, 20} %) — one model for any budget.
+
+**Known limitation of the straight-through mask.** Masked Gaussians have opacity 0, so the rasteriser gives them no gradient: the head can learn to *demote* kept Gaussians but gets only the sigmoid signal to promote discarded ones. Mention in the paper; the hybrid-mask run (3) is the check.
 
 ### Second dataset: SRN Chairs (evaluation only)
 
@@ -158,9 +167,9 @@ Cost: download + sbatch unzip of `srn_chairs`, ~1 night of evaluation. Not NMR (
 |---|---|---|---|
 | **Mon 16** | copy scripts to cluster; smoke test `eval_budget.py --max_objects 3`; fix whatever breaks | Overleaf (CVPR template), skeleton, Preliminaries (3DGS, Splatter Image) | evening: Level 1 full run (704 cars, split into 4 jobs of 176 objects) |
 | **Tue 17** | smoke test `train_head.py` (200 steps); launch Level 2 (A, and B if fast); analyse Level 1 CSVs → figures 1–2; **download + unzip SRN Chairs** (sbatch) | Related work (§3 of overview) | Level 2 training (~3–6 h); night: `eval_budget.py chairs` |
-| **Wed 18** | Level 3 patch + 200-iteration smoke test; **launch FT-ctrl, FT-10, FT-5** | Method section | 3 fine-tunes (~20 h, requeue) |
-| **Thu 19** | eval Level 2 with `eval_budget.py --criteria opacity contribution learned`; profiling table | slides draft | fine-tunes running |
-| **Fri 20** | eval Level 3 runs; all final figures; **360° comparison video (§8.1)** | Experiments section | eval jobs |
+| **Wed 18** | `finetune_budget.py` smoke test + lr check (5e-6 vs 2e-5); **launch wave 1 (control, FT-10 learned) + queue wave 2 (FT-10 hybrid, DRO)** | — (Taya's account only) | 4 fine-tunes, 10 h each, 2 at a time |
+| **Thu 19** | write intro / related work while wave 1 runs; eval wave 1 in the evening; `benchmark_cost.py` when a slot is free | slides draft | wave 2 running |
+| **Fri 20** | eval wave 2; Level 3 analysis (budgets 5/10/20 %, angles, how the model adapted); all final figures; **360° comparison video (§8.1)** | Experiments section | eval jobs |
 | **Sat 21** | Results + Limitations; numbers into slides; *optional:* own-photo demo (§8.2) | Intro, Abstract, polish | full-250-view re-runs of best configs |
 | **Sun 22–Mon 23** | rehearsal, likely questions, final PDF | same | — |
 | **Tue 24** | submission + defense | | |

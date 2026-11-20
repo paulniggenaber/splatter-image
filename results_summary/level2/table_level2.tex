@@ -8,14 +8,14 @@
 \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-6}
 Criterion & PSNR$\uparrow$ & LPIPS$\downarrow$ & PSNR$\uparrow$ & LPIPS$\downarrow$ & PSNR$\uparrow$ & (ms) \\
 \midrule
-Opacity & 19.91 & 0.113 & 17.08 & 0.147 & 14.37 & 0.1 \\
-Opacity $\times$ area & 21.27 & 0.113 & \textbf{19.40} & 0.149 & \textbf{16.18} & 0.3 \\
-Hybrid rank & \textbf{21.32} & \textbf{0.106} & 18.84 & \textbf{0.136} & 15.65 & 0.7 \\
-Contribution (oracle, teacher) & 20.36 & 0.108 & 18.21 & 0.144 & 14.98 & 29.8 \\
+Opacity & 19.84 & 0.113 & 17.00 & 0.148 & 14.29 & 0.1 \\
+Opacity $\times$ area & 21.20 & 0.113 & \textbf{19.32} & 0.149 & \textbf{16.10} & 0.3 \\
+Hybrid rank & \textbf{21.25} & \textbf{0.106} & 18.77 & \textbf{0.136} & 15.57 & 0.7 \\
+Contribution (oracle, teacher) & 20.29 & 0.108 & 18.13 & 0.144 & 14.90 & 29.8 \\
 \midrule
-Learned head (ours) & 21.11 & 0.108 & 18.78 & 0.142 & 15.97 & 0.5 \\
+Learned head (ours) & 21.04 & 0.108 & 18.71 & 0.142 & 15.89 & 0.5 \\
 \bottomrule
 \end{tabular}
-\caption{Learned importance head vs.\ training-free criteria on SRN Cars (704 test objects). The head is distilled from the contribution oracle and needs one forward pass of a $80$k-parameter CNN (no renders, no ground truth). Selection time excludes the shared Splatter Image forward pass.}
+\caption{Learned importance head vs.\ training-free criteria on SRN Cars (703 test objects, 25 evaluation views each). The head is distilled from the contribution oracle and needs one forward pass of a $80$k-parameter CNN (no renders, no ground truth). Selection time excludes the shared Splatter Image forward pass.}
 \label{tab:level2}
 \end{table}

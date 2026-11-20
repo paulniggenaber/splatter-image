@@ -51,6 +51,30 @@ def subset(pc, idx):
     return {k: v[idx].contiguous() for k, v in pc.items()}
 
 
+GAUSS_KEYS = ("xyz", "opacity", "scaling", "rotation", "features_dc", "features_rest")
+
+
+def split_symmetric(recon):
+    """Symmetry model (Paul's extension): the forward pass returns N original Gaussians followed by their
+    N mirrored twins (twin of i at index N+i), plus non-Gaussian keys (sym_plane, sym_switch, ...).
+    Returns (dict with Gaussian keys only, number of ORIGINAL Gaussians, is_symmetric).
+    Works for batched (B, N, ...) dicts."""
+    sym = "sym_switch" in recon
+    g = {k: v for k, v in recon.items() if k in GAUSS_KEYS}
+    n_tot = g["xyz"].shape[-2]
+    return g, (n_tot // 2 if sym else n_tot), sym
+
+
+def originals(g, n_orig):
+    """First n_orig Gaussians (batched dict)."""
+    return {k: v[:, :n_orig] for k, v in g.items()}
+
+
+def pair_indices(idx, n_orig, sym):
+    """Indices of kept originals -> indices of kept originals AND their twins (symmetric model)."""
+    return torch.cat([idx, idx + n_orig]) if sym else idx
+
+
 def detached(pc):
     return {k: v.detach() for k, v in pc.items()}
 

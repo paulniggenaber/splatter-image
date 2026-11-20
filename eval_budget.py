@@ -42,13 +42,13 @@ import importance as imp
 ORACLES = {"contribution", "error_sens", "error_sens_signed"}
 
 
-def load_model(dataset_name, experiment_path, device):
+def load_model(dataset_name, experiment_path, device, ckpt="model_latest.pth"):
     if experiment_path is None:
         cfg_path = hf_hub_download("szymanowiczs/splatter-image-v1", f"config_{dataset_name}.yaml")
         model_path = hf_hub_download("szymanowiczs/splatter-image-v1", f"model_{dataset_name}.pth")
     else:
         cfg_path = os.path.join(experiment_path, ".hydra", "config.yaml")
-        model_path = os.path.join(experiment_path, "model_latest.pth")
+        model_path = os.path.join(experiment_path, ckpt)
     cfg = OmegaConf.load(cfg_path)
     model = GaussianSplatPredictor(cfg)
     ckpt = torch.load(model_path, map_location=device)
@@ -110,7 +110,7 @@ def angle_deg(c0, c1):
 def main(a):
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
-    model, cfg = load_model(a.dataset_name, a.experiment_path, device)
+    model, cfg = load_model(a.dataset_name, a.experiment_path, device, a.ckpt)
     bg = torch.tensor([1, 1, 1] if cfg.data.white_background else [0, 0, 0],
                       dtype=torch.float32, device=device)
     lpips_net = lpips_lib.LPIPS(net="vgg").to(device)
@@ -143,8 +143,10 @@ def main(a):
         inp = model_input(data, cfg)
         recon = model(inp, data["view_to_world_transforms"][:, :n_in],
                       data["source_cv2wT_quat"][:, :n_in], None)
+        recon, n_orig, sym = imp.split_symmetric(recon)      # symmetry model: originals + twins
         pc = {k: v[0].contiguous() for k, v in recon.items()}
-        N = pc["xyz"].shape[0]
+        pc_orig = {k: v[:n_orig] for k, v in pc.items()}     # scores are computed on the stored originals
+        N = n_orig
 
         novel = list(range(n_in, data["gt_images"].shape[1]))
         eval_ids = even_subsample(novel[0::2], a.n_eval_views)
@@ -170,10 +172,13 @@ def main(a):
                             f"{psnr_m.mean():.4f}", f"{ss.mean():.5f}", f"{lp.mean():.5f}",
                             f"{sel_ms:.3f}"])
 
-        evaluate(pc, "full", 1.0, N, 0.0)
+        evaluate(pc, "full", 1.0, N, 0.0)          # n_gaussians = STORED (original) Gaussians
 
         for crit in a.criteria:
             t0 = time.perf_counter()
+            if sym and (crit == "merge" or crit.startswith("contribution") or crit.startswith("error_sens")):
+                print(f"skip {crit}: not defined for the symmetry model", flush=True)
+                continue
             if crit == "merge":
                 for b in (2, 4):
                     m = imp.merge_blocks(pc, b=b)
@@ -200,15 +205,16 @@ def main(a):
                 score = imp.error_sensitivity_scores(pc, imp.cams_from_data(data, score_ids), sgts,
                                                      bg, cfg, signed=crit.endswith("signed"))
             elif crit == "learned":
-                x = imp.ImportanceHead.make_input(inp[:, 0], recon, inputs=head_inputs)
+                x = imp.ImportanceHead.make_input(inp[:, 0], imp.originals(recon, n_orig), inputs=head_inputs)
                 score = head(x)[0]
             else:
-                score = imp.cheap_scores(pc, crit, input_image=inp[0, 0], seed=d_idx)
+                score = imp.cheap_scores(pc_orig, crit, input_image=inp[0, 0], seed=d_idx)
             torch.cuda.synchronize()
             sel_ms = 1000 * (time.perf_counter() - t0)
             for budget in a.budgets:
                 k = max(1, int(round(budget * N)))
-                evaluate(imp.subset(pc, imp.topk_indices(score, k)), crit, budget, k, sel_ms)
+                idx = imp.pair_indices(imp.topk_indices(score, k), n_orig, sym)
+                evaluate(imp.subset(pc, idx), crit, budget, k, sel_ms)
 
         free_cached_example(dataset, example_id)
         if local_idx % 10 == 0:
@@ -220,6 +226,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("dataset_name", default="cars")
     p.add_argument("--experiment_path", default=None)
+    p.add_argument("--ckpt", default="model_latest.pth", help="checkpoint file inside --experiment_path (e.g. model_best.pth)")
     p.add_argument("--split", default="test")
     p.add_argument("--start_idx", type=int, default=0)
     p.add_argument("--max_objects", type=int, default=0, help="0 = all")

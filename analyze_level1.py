@@ -208,9 +208,21 @@ def fig_angle(t, budget, path, crits=("opacity", "opacity_area", "hybrid", "cont
     plt.close(fig)
 
 
+def drop_blank_objects(views, thresh=30.0):
+    """Drop test objects whose ground truth contains (almost) no object pixels. In SRN Cars this is
+    car 375 (876d92ce6a0e4bf399588eee976baae): all 251 images are blank, so every method scores
+    ~40-75 dB on it. Detected as median masked PSNR of the full model > thresh (normal cars: <= 25)."""
+    full = views[views.criterion == "full"]
+    med = full.groupby("object_idx").psnr_masked.median()
+    blank = med[med > thresh].index.tolist()
+    print(f"blank test objects dropped entirely: {blank}")
+    return views[~views.object_idx.isin(blank)]
+
+
 def drop_empty_views(views):
     """Views whose ground truth is pure background (no object pixel -> masked PSNR = 100) make PSNR
     infinite as soon as a pruned render is also empty. Drop them for ALL methods (paired comparison)."""
+    views = drop_blank_objects(views)
     full = views[views.criterion == "full"]
     empty = full[full.psnr_masked >= 99.9][["object_idx", "view_id"]]
     v = views.merge(empty.assign(_empty=1), on=["object_idx", "view_id"], how="left")
