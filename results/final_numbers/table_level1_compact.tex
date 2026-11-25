@@ -1,0 +1,22 @@
+\begin{table}[t]\centering\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccccc}
+\toprule
+Kept Gaussians & \multicolumn{2}{c}{10\%} & \multicolumn{2}{c}{5\%} & \multicolumn{2}{c}{2\%} \\
+ & PSNR$\uparrow$ & LPIPS$\downarrow$ & PSNR$\uparrow$ & LPIPS$\downarrow$ & PSNR$\uparrow$ & LPIPS$\downarrow$ \\
+\midrule
+Random & 17.29 & 0.181 & 15.63 & 0.205 & 14.39 & 0.234 \\
+Opacity & 19.84 & 0.113 & 17.00 & 0.148 & 14.99 & 0.195 \\
+Scale & 17.28 & 0.194 & 16.26 & 0.218 & 14.80 & 0.261 \\
+Edge + opacity [PhGS] & 17.02 & 0.144 & 15.83 & 0.166 & 14.73 & 0.199 \\
+Opacity $\times$ area (ours) & 21.20 & 0.113 & \textbf{19.32} & 0.149 & \textbf{17.26} & 0.189 \\
+Hybrid (ours) & \textbf{21.25} & 0.106 & 18.77 & 0.136 & 16.62 & 0.178 \\
+Contribution, iter.\ + bal.$^\dagger$ [LightGaussian] & 20.50 & 0.106 & 19.12 & 0.132 & 17.20 & 0.173 \\
+Merge 4$\times$4 [ToMe]$^\ddagger$ & -- & -- & 21.34 & 0.176 & -- & -- \\
+\midrule
+All 16,384 Gaussians & \multicolumn{6}{c}{23.90 / 0.076} \\
+\bottomrule
+\end{tabular}
+\caption{Training-free selection on the original model (703 cars, 25 novel views each). $^\dagger$Oracle: needs renders of other views. $^\ddagger$Merging reaches only 25\,\% and 6.25\,\% (6.25\,\% shown in the 5\,\% column, not bolded: it keeps more Gaussians).}
+\label{tab:level1}
+\end{table}

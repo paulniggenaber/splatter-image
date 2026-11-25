@@ -76,6 +76,16 @@ class Out:
         df.to_csv(os.path.join(self.folder, name + ".csv"), index=False)
 
 
+
+def gz(path):
+    """Use the compressed copy (path + '.gz') if only that one exists (results/raw stores .csv.gz)."""
+    return path if os.path.exists(path) or not os.path.exists(path + ".gz") else path + ".gz"
+
+
+def globgz(pattern):
+    """glob that also finds the compressed copies (*.csv.gz) of *.csv files."""
+    return sorted(glob.glob(pattern) + glob.glob(pattern + ".gz"))
+
 def md(df, floatfmt="{:.3f}"):
     cols = list(df.columns)
     lines = ["| " + " | ".join(map(str, cols)) + " |", "|" + "---|" * len(cols)]
@@ -91,7 +101,7 @@ def md(df, floatfmt="{:.3f}"):
 
 
 def files_for(res, prefix):
-    return sorted(glob.glob(os.path.join(res, f"{prefix}*_views.csv")))
+    return globgz(os.path.join(res, f"{prefix}*_views.csv"))
 
 
 def load_views(res, prefix, model):
@@ -174,6 +184,7 @@ def main(a):
 
     # ---------- 01 reproduction (official protocol)
     bf = os.path.join(res, "raw_official", "baseline_cars_full_scores.txt")
+    bf = gz(bf)
     if os.path.exists(bf):
         b = pd.read_csv(bf, sep=r"\s+", header=None, names=["object_idx", "psnr", "ssim", "lpips"])
         t = pd.DataFrame([{"objects": "all 704", "psnr": b.psnr.mean(), "ssim": b.ssim.mean(), "lpips": b.lpips.mean()},
@@ -184,6 +195,7 @@ def main(a):
     # ---------- 02 viewpoint analysis of the full model
     blocks, srcs = [], []
     vf = os.path.join(res, "raw_official", "viewpoint_gap_full704.csv")
+    vf = gz(vf)
     if os.path.exists(vf):
         g = pd.read_csv(vf)
         g = g[~g.object_id.isin(blank)]
@@ -214,7 +226,7 @@ def main(a):
     L1 = pd.DataFrame(rows)
     sel = V[(V.model == "original")].groupby(["criterion", "budget"]).size()   # noqa: F841 (existence check)
     # selection time from the objects files
-    objs = pd.concat([pd.read_csv(x) for x in glob.glob(os.path.join(res, "budget_full_part*_objects.csv"))])
+    objs = pd.concat([pd.read_csv(x) for x in globgz(os.path.join(res, "budget_full_part*_objects.csv"))])
     st = objs[objs.object_idx > 0].groupby(["criterion", "budget"]).select_ms.mean().rename("select_ms").reset_index()
     L1 = L1.merge(st, on=["criterion", "budget"], how="left")
     out.csv("03_level1", L1)
@@ -393,6 +405,6 @@ def main(a):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--results", default="results")
+    p.add_argument("--results", default="results/raw")
     p.add_argument("--out", default="results/final_numbers")
     main(p.parse_args())

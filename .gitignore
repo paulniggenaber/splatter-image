@@ -3,7 +3,8 @@ __pycache__
 experiments_out
 configs/hydra/cluster.yaml
 
-# Job outputs, checkpoints, logs and local results are not tracked.
+# Job outputs, checkpoints, logs and local results are not tracked
+# (except the final results in results/, see results/README.md).
 # ======================================================================
 out/
 err/
@@ -13,6 +14,11 @@ outputs/
 *.ply
 .ipynb_checkpoints
 .DS_Store
-results/
+results/*
+!results/README.md
+!results/raw/
+!results/final_numbers/
+!results/final_figures/
+!results/examples/
 logs/
 # ======================================================================

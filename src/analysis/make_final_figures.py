@@ -40,6 +40,16 @@ SERIES = [
 TEXT, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
 
+
+def gz(path):
+    """Use the compressed copy (path + '.gz') if only that one exists (results/raw stores .csv.gz)."""
+    return path if os.path.exists(path) or not os.path.exists(path + ".gz") else path + ".gz"
+
+
+def globgz(pattern):
+    """glob that also finds the compressed copies (*.csv.gz) of *.csv files."""
+    return sorted(glob.glob(pattern) + glob.glob(pattern + ".gz"))
+
 def style(ax):
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
@@ -97,7 +107,7 @@ def fig_storage(a):
 
 
 def load_views(res, prefix, model):
-    fs = sorted(glob.glob(os.path.join(res, f"{prefix}*_views.csv")))
+    fs = globgz(os.path.join(res, f"{prefix}*_views.csv"))
     if not fs:
         return None
     v = pd.concat([pd.read_csv(f) for f in fs]).drop_duplicates(["object_idx", "criterion", "budget", "view_id"])
@@ -172,7 +182,7 @@ def fig_twins(a):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--tables", default="results/final_numbers")
-    p.add_argument("--results", default="results")
+    p.add_argument("--results", default="results/raw")
     p.add_argument("--out", default="results/final_figures")
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
