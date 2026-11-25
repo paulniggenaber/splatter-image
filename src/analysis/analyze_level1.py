@@ -2,7 +2,7 @@
 """
 Analyse the Level 1 CSVs written by eval_budget.py (all parts are merged automatically).
 
-    python analyze_level1.py results/budget_full_part --out results/analysis
+    python -m src.analysis.analyze_level1 results/budget_full_part --out results/analysis
     (prefix = everything before "0_objects.csv"; also works for a single run: results/smoke)
 
 Writes to --out:

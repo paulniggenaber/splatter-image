@@ -16,15 +16,15 @@ objects, resume after a time limit, outputs readable by eval_budget.py --experim
 
 Examples
   # smoke test (~5-10 min)
-  python finetune_budget.py --mask learned --keep 0.10 --head_ckpt runs/abl_reference/head.pth \
+  python -m src.reduction.finetune_budget --mask learned --keep 0.10 --head_ckpt runs/abl_reference/head.pth \
       --max_iters 200 --val_every 100 --out runs/ft_smoke
   # main runs (10 h each)
-  python finetune_budget.py --mask none                      --hours 10 --out runs/ft_ctrl
-  python finetune_budget.py --mask learned --keep 0.10 --head_ckpt runs/abl_reference/head.pth --hours 10 --out runs/ft10_learned
-  python finetune_budget.py --mask hybrid  --keep 0.10       --hours 10 --out runs/ft10_hybrid
-  python finetune_budget.py --mask none --view_weighting dro --hours 10 --out runs/ft_dro
+  python -m src.reduction.finetune_budget --mask none                      --hours 10 --out runs/ft_ctrl
+  python -m src.reduction.finetune_budget --mask learned --keep 0.10 --head_ckpt runs/abl_reference/head.pth --hours 10 --out runs/ft10_learned
+  python -m src.reduction.finetune_budget --mask hybrid  --keep 0.10       --hours 10 --out runs/ft10_hybrid
+  python -m src.reduction.finetune_budget --mask none --view_weighting dro --hours 10 --out runs/ft_dro
 Evaluation (704 test cars)
-  python eval_budget.py cars --experiment_path runs/ft10_learned --criteria opacity hybrid learned \
+  python -m src.reduction.eval_budget cars --experiment_path runs/ft10_learned --criteria opacity hybrid learned \
       --head_ckpt runs/ft10_learned/head.pth --out results/test_ft10_learned
 """
 import argparse
@@ -39,9 +39,9 @@ import torch
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Subset
 
-import importance as imp
+from src.reduction import importance as imp
 from datasets.dataset_factory import get_dataset
-from eval_budget import FreeCacheDataset, load_model, model_input, worker_kwargs
+from src.reduction.eval_budget import FreeCacheDataset, load_model, model_input, worker_kwargs
 
 BIN_DEG = 30
 N_BINS = 180 // BIN_DEG

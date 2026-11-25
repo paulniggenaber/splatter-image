@@ -10,7 +10,7 @@ object cropped, padded to a square, foreground ratio 0.65, white background, 128
 Input: a PNG WITH TRANSPARENT BACKGROUND (macOS Finder: right-click -> Quick Actions -> Remove Background).
 A JPG with a plain white/light background also works (the light pixels become the background).
 
-  python wild_objaverse.py --images wild_any/*.png --budgets 1.0 0.1 0.05 --out results/wild_any
+  python -m src.visualization.wild_objaverse --images wild_any/*.png --budgets 1.0 0.1 0.05 --out results/wild_any
 Outputs per image <name>: <name>_input.png, <name>_views.png/.pdf (rows = budgets, columns = input +
 views at --angles), <name>_360.mp4 (all budgets side by side).
 """
@@ -38,9 +38,10 @@ for _m in ("rembg", "plyfile"):            # app_utils imports these at top leve
 from utils.app_utils import get_source_camera_v2w_rmo_and_quats, get_target_cameras  # noqa: E402
 from scene.gaussian_predictor import GaussianSplatPredictor  # noqa: E402
 
-import importance as imp  # noqa: E402
-from vis_splatter import cfg_at, label_bar, to_img  # noqa: E402
+from src.reduction import importance as imp  # noqa: E402
+from src.visualization.vis_splatter import cfg_at, label_bar, to_img  # noqa: E402
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 N_LOOP = 200                                # frames of the official 360-degree loop
 
 
@@ -75,7 +76,7 @@ def keep(pc, b):
 def main(a):
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
-    cfg = OmegaConf.load(os.path.join(os.path.dirname(os.path.abspath(imp.__file__)), "gradio_config.yaml"))
+    cfg = OmegaConf.load(os.path.join(REPO_ROOT, "gradio_config.yaml"))
     model = GaussianSplatPredictor(cfg)
     ck = torch.load(hf_hub_download(repo_id="szymanowiczs/splatter-image-multi-category-v1", filename="model_latest.pth"),
                     map_location=device)

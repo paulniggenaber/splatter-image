@@ -9,7 +9,7 @@ Final figures of the report (run on a laptop after make_all_tables.py):
   fig_budget    Level 1: PSNR vs % kept Gaussians, training-free rules + learned head (no plain contribution)
   fig_angles    ΔPSNR vs the original full model per input-target angle bin at 10 % stored Gaussians.
 
-    python code/make_final_figures.py --tables results/final_numbers --results results --out results/final_figures
+    python -m src.analysis.make_final_figures --tables results/final_numbers --results results --out results/final_figures
 """
 import argparse
 import glob
@@ -22,8 +22,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import analyze_level1 as A  # noqa: E402
+from src.analysis import analyze_level1 as A  # noqa: E402
 
 N = 16384
 FLOATS = {"plain": 23, "symmetric": 27}

@@ -1,7 +1,7 @@
 # entirely new code file from Taya
 """Compact Level-1 table for the paper: PSNR (dB) / LPIPS of training-free selection rules at 10/5/2 %
 of the Gaussians, original model, 703 cars, 25 views.
-    python code/make_level1_compact.py --table results/final_numbers/03_level1.csv --out results/final_numbers/table_level1_compact.tex
+    python -m src.analysis.make_level1_compact --table results/final_numbers/03_level1.csv --out results/final_numbers/table_level1_compact.tex
 """
 import argparse
 import numpy as np

@@ -15,7 +15,7 @@ Rows of the figure (one figure per object):
 Run from a checkout that contains Paul's model code (it also loads plain models), e.g.
 ~/dl4cv-project/splatter-sym on Taya's account:
 
-  python vis_splatter.py --objects 0 57 312 --out results/vis \\
+  python -m src.visualization.vis_splatter --objects 0 57 312 --out results/vis \\
     --model "Original (all 16,384)|released|-|none|1.0" \\
     --model "Original + hybrid 10%|released|-|hybrid|0.1" \\
     --model "Fine-tuned for 10% (ours)|$HOME/dl4cv-project/splatter-image/runs/ft10_hybrid|model_best.pth|hybrid|0.1" \\
@@ -37,9 +37,9 @@ from omegaconf import OmegaConf
 from PIL import Image, ImageDraw, ImageFont
 from torch.utils.data import DataLoader, Subset
 
-import importance as imp
+from src.reduction import importance as imp
 from datasets.dataset_factory import get_dataset
-from eval_budget import FreeCacheDataset, load_model, model_input
+from src.reduction.eval_budget import FreeCacheDataset, load_model, model_input
 
 H = W = 128
 DISCARD_RGB = np.array([0.93, 0.42, 0.42])    # discarded pixels in the opacity row

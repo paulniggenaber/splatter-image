@@ -12,7 +12,7 @@ Quick Actions -> Remove Background). JPGs without alpha are used as they are (a 
 background works; a busy background will not). The car should be seen from the side-front and slightly
 from above, like the SRN input views (see <out>/template_input.png).
 
-  python wild_splatter.py --images wild/*.png --out results/wild --angles 90 180 \\
+  python -m src.visualization.wild_splatter --images wild/*.png --out results/wild --angles 90 180 \\
     --model "Splatter Image|released|-|none|1.0" \\
     --model "Fine-tuned 10% + symmetry|runs/sym_ft10|model_best.pth|hybrid|0.1"
 Model spec as in vis_splatter.py: "label|path or released|ckpt|mask|keep[|twins_off]".
@@ -30,10 +30,10 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from torch.utils.data import DataLoader, Subset
 
-import importance as imp
+from src.reduction import importance as imp
 from datasets.dataset_factory import get_dataset
-from eval_budget import FreeCacheDataset, load_model, model_input
-from vis_splatter import cfg_at, label_bar, parse_model, select, storage_mb, to_img
+from src.reduction.eval_budget import FreeCacheDataset, load_model, model_input
+from src.visualization.vis_splatter import cfg_at, label_bar, parse_model, select, storage_mb, to_img
 
 
 def fg_box(mask):

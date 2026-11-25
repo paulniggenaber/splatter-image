@@ -8,8 +8,8 @@ Per step, for a training object:
     head(input image + predicted Gaussian maps) -> logits -> ranking loss vs oracle
 At test time: one forward of the head, no renders, no ground truth.
 
-    python train_head.py cars --target contribution --out runs/head_A     # variant A
-    python train_head.py cars --target error_sens   --out runs/head_B     # variant B
+    python -m src.reduction.train_head cars --target contribution --out runs/head_A     # variant A
+    python -m src.reduction.train_head cars --target error_sens   --out runs/head_B     # variant B
 Ablations (tune on val only; compare val_overlap10 in <out>/log.csv):
     --inputs rgb | gauss | all     what the head sees (default all)
     --loss   rank | mse            ranking vs regression on log-importance (default rank)
@@ -18,7 +18,7 @@ Speed: the bottleneck is reading many small files from BeeGFS, so data is loaded
 --num_workers parallel workers (set #SBATCH --cpus-per-task >= num_workers + 1), and the
 validation objects + their oracle targets are computed ONCE at start-up and kept on the GPU.
 Then:
-    python eval_budget.py cars --criteria opacity opacity_area contribution learned --head_ckpt runs/head_A/head.pth
+    python -m src.reduction.eval_budget cars --criteria opacity opacity_area contribution learned --head_ckpt runs/head_A/head.pth
 """
 import argparse
 import os
@@ -28,9 +28,9 @@ import time
 import torch
 from torch.utils.data import DataLoader, Subset
 
-import importance as imp
+from src.reduction import importance as imp
 from datasets.dataset_factory import get_dataset
-from eval_budget import FreeCacheDataset, load_model, model_input, worker_kwargs
+from src.reduction.eval_budget import FreeCacheDataset, load_model, model_input, worker_kwargs
 
 
 def oracle(pc, data, view_ids, cfg, bg, target):

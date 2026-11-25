@@ -7,7 +7,7 @@ Every car file holds 50 views with their cameras. For each view the true mirror 
 in that camera's frame follows from its world-to-view transform (x = 0 in dataset
 coordinates, see datasets/srn.py). Each training step takes K random views of B cars.
 
-    python train_plane.py --out experiments_out/plane1 --steps 4000
+    python -m src.symmetry.train_plane --out experiments_out/plane1 --steps 4000
 
 Reports, on validation cars (random views) and on test cars at the benchmark input
 view (view 64): mean / median angle error, and the share of cars under 5 and 3 degrees.
@@ -98,7 +98,7 @@ def evaluate_test(model, device, n_cars, workers, category="cars"):
     """Test objects at the benchmark input view (view 64), through the normal dataset class."""
     from hydra import compose, initialize
     from datasets.dataset_factory import get_dataset
-    with initialize(version_base=None, config_path="configs"):
+    with initialize(version_base=None, config_path="../../configs"):
         cfg = compose(config_name="default_config", overrides=["+dataset={}".format(category), "+experiment=lpips_100k"])
     cfg.data.subset = n_cars
     dataset = get_dataset(cfg, "test")

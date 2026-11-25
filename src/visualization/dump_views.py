@@ -3,7 +3,7 @@
 Save all ground-truth views (the real dataset images) of some test objects as PNGs, named by view index
 and angle from the input camera, e.g. for a "what the data looks like" figure.
 
-  python dump_views.py --objects 263 --out results/views_dump
+  python -m src.visualization.dump_views --objects 263 --out results/views_dump
 Output: <out>/obj<k>/<view>_<angle>deg.png (128x128), view 000 is the input.
 """
 import argparse
@@ -15,7 +15,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Subset
 
 from datasets.dataset_factory import get_dataset
-from eval_budget import FreeCacheDataset, load_model
+from src.reduction.eval_budget import FreeCacheDataset, load_model
 
 
 def main(a):

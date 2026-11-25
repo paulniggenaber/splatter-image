@@ -11,7 +11,7 @@ Hypothesis: under a budget the model keeps mostly near-side Gaussians and relies
 hidden side, i.e. each stored Gaussian "works twice".
 
 Run from a checkout with Paul's model code (e.g. ~/dl4cv-project/splatter-sym):
-  python sym_usage.py --model "sym_long|experiments_out/sym_long|model_latest.pth" \\
+  python -m src.analysis.sym_usage --model "sym_long|experiments_out/sym_long|model_latest.pth" \\
                       --model "Sym+AnyBudget|runs/sym_anybudget|model_best.pth" \\
                       --model "Sym+FT10|runs/sym_ft10|model_best.pth" --max_objects 200 --out results/sym_usage
 """
@@ -22,9 +22,9 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Subset
 
-import importance as imp
+from src.reduction import importance as imp
 from datasets.dataset_factory import get_dataset
-from eval_budget import FreeCacheDataset, load_model, model_input
+from src.reduction.eval_budget import FreeCacheDataset, load_model, model_input
 from scene.symmetry import near_side_mask
 
 

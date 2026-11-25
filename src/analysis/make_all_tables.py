@@ -2,7 +2,7 @@
 """
 Recompute EVERY number of the report from the raw CSV files, in one protocol, with sources.
 
-    python code/make_all_tables.py --results results --out results/final_numbers
+    python -m src.analysis.make_all_tables --results results --out results/final_numbers
 
 Protocol used everywhere (unless a table says otherwise):
   * SRN Cars test set, 703 objects: blank objects (car 375, all 251 images white) are dropped
@@ -32,8 +32,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import analyze_level1 as A  # noqa: E402  (load(), ci95(), bin_angles())
+from src.analysis import analyze_level1 as A  # noqa: E402  (load(), ci95(), bin_angles())
 
 BINS = list(range(0, 181, 30))
 BIN_LABELS = ["30-60", "60-90", "90-120", "120-150", "150-180"]

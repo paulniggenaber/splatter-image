@@ -13,7 +13,7 @@ What it measures, for several representations of the same objects:
   5. storage (23 floats per Gaussian)
 and it renders a side-by-side 360-degree video and a 3-view image strip for one object.
 
-    python benchmark_cost.py --ft_path runs/ft10_hybrid --out results/cost
+    python -m src.reduction.benchmark_cost --ft_path runs/ft10_hybrid --out results/cost
 Outputs (in --out):
     cost_table.csv / cost_table.md      everything above, one row per (variant, resolution)
     video_obj<k>.mp4 (or .gif)           side-by-side 360-degree video, labels + #Gaussians under each panel
@@ -33,9 +33,9 @@ from omegaconf import OmegaConf
 from PIL import Image, ImageDraw, ImageFont
 from torch.utils.data import DataLoader, Subset
 
-import importance as imp
+from src.reduction import importance as imp
 from datasets.dataset_factory import get_dataset
-from eval_budget import FreeCacheDataset, load_model, model_input
+from src.reduction.eval_budget import FreeCacheDataset, load_model, model_input
 
 BYTES_PER_GAUSSIAN = 23 * 4
 

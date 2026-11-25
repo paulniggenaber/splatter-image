@@ -13,12 +13,12 @@ Output:
     <out>_views.csv   : one row per (object, criterion, budget, view): + angle to the input camera
 
 Example (20-object smoke test, ~5 min on a MIG slice):
-    python eval_budget.py cars --max_objects 20 --out results/budget_smoke
+    python -m src.reduction.eval_budget cars --max_objects 20 --out results/budget_smoke
 Full run (all 704 objects; split across jobs with --start_idx / --max_objects if needed):
-    python eval_budget.py cars --out results/budget_full
+    python -m src.reduction.eval_budget cars --out results/budget_full
 Learned head / fine-tuned model:
-    python eval_budget.py cars --criteria opacity learned --head_ckpt runs/head_A/head.pth
-    python eval_budget.py cars --experiment_path runs/budget_ft --criteria opacity learned ...
+    python -m src.reduction.eval_budget cars --criteria opacity learned --head_ckpt runs/head_A/head.pth
+    python -m src.reduction.eval_budget cars --experiment_path runs/budget_ft --criteria opacity learned ...
 """
 import argparse
 import csv
@@ -38,7 +38,7 @@ from gaussian_renderer import render_predicted
 from scene.gaussian_predictor import GaussianSplatPredictor
 from utils.loss_utils import ssim as ssim_fn
 
-import importance as imp
+from src.reduction import importance as imp
 
 ORACLES = {"contribution", "error_sens", "error_sens_signed"}
 
