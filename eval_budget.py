@@ -1,3 +1,4 @@
+# entirely new code file from Taya
 """
 Level 1 (and evaluation for Levels 2/3): quality vs Gaussian budget for many selection criteria,
 in ONE pass over the test set (one U-Net forward per object, all criteria x budgets reuse it).
@@ -111,6 +112,9 @@ def main(a):
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
     model, cfg = load_model(a.dataset_name, a.experiment_path, device, a.ckpt)
+    sym_model = cfg.model.get("symmetry", None) is not None and bool(cfg.model.symmetry.get("enabled", False))
+    if a.sym_mode != "model" and not sym_model:
+        raise SystemExit("--sym_mode oracle/twins_off needs a symmetry model")
     bg = torch.tensor([1, 1, 1] if cfg.data.white_background else [0, 0, 0],
                       dtype=torch.float32, device=device)
     lpips_net = lpips_lib.LPIPS(net="vgg").to(device)
@@ -141,8 +145,13 @@ def main(a):
         data = {k: v.to(device) for k, v in data.items()}
         n_in = cfg.data.input_images
         inp = model_input(data, cfg)
+        kw = {}
+        if sym_model and a.sym_mode == "oracle":            # mirror with the TRUE plane (in the data)
+            kw["sym_plane_override"] = data["sym_plane"]
+        elif sym_model and a.sym_mode == "twins_off":       # switch every twin off at test time
+            kw["sym_switch_override"] = 0.0
         recon = model(inp, data["view_to_world_transforms"][:, :n_in],
-                      data["source_cv2wT_quat"][:, :n_in], None)
+                      data["source_cv2wT_quat"][:, :n_in], None, **kw)
         recon, n_orig, sym = imp.split_symmetric(recon)      # symmetry model: originals + twins
         pc = {k: v[0].contiguous() for k, v in recon.items()}
         pc_orig = {k: v[:n_orig] for k, v in pc.items()}     # scores are computed on the stored originals
@@ -157,6 +166,8 @@ def main(a):
         score_angles = [angle_deg(data["camera_centers"][0, 0], data["camera_centers"][0, i]) for i in score_ids]
 
         def evaluate(pc_sel, crit, budget, n_kept, sel_ms):
+            if a.fp16:   # storage precision ablation: Gaussians stored in float16, rendered in float32
+                pc_sel = {k: v.half().float() for k, v in pc_sel.items()}
             imgs = torch.stack([imp._render(pc_sel, c, bg, cfg) for c in eval_cams]).clamp(0, 1)
             mse = ((imgs - gts) ** 2).mean(dim=[1, 2, 3])
             psnr = -10 * torch.log10(mse)
@@ -227,6 +238,9 @@ if __name__ == "__main__":
     p.add_argument("dataset_name", default="cars")
     p.add_argument("--experiment_path", default=None)
     p.add_argument("--ckpt", default="model_latest.pth", help="checkpoint file inside --experiment_path (e.g. model_best.pth)")
+    p.add_argument("--sym_mode", choices=["model", "oracle", "twins_off"], default="model",
+                   help="symmetry models: own predicted plane (model), TRUE plane (oracle), or twins switched off")
+    p.add_argument("--fp16", action="store_true", help="store the kept Gaussians in float16 (precision ablation)")
     p.add_argument("--split", default="test")
     p.add_argument("--start_idx", type=int, default=0)
     p.add_argument("--max_objects", type=int, default=0, help="0 = all")

@@ -1,3 +1,4 @@
+# entirely new code file from Taya
 """
 Analyse the Level 1 CSVs written by eval_budget.py (all parts are merged automatically).
 
@@ -134,30 +135,32 @@ def style_axes(ax):
     ax.grid(True, color=GRID, linewidth=0.6); ax.set_axisbelow(True)
 
 
-def fig_budget(s, path):
+def fig_budget(s, path, exclude=("contribution",)):
+    """PSNR vs fraction of kept Gaussians (log x), one line per selection rule."""
     full = s[s.criterion == "full"].iloc[0]
-    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.8))
-    for ax, m, ylab in [(axes[0], "psnr", "PSNR (dB) ↑"), (axes[1], "lpips", "LPIPS ↓")]:
-        ax.axhline(full[m], color=MUTED, linewidth=1, linestyle="--", zorder=1)
-        ax.text(1, full[m], " full model", color=MUTED, fontsize=7, va="bottom" if m == "psnr" else "top", ha="left")
-        for c, st in STYLE.items():
-            g = s[s.criterion == c].sort_values("budget")
-            if g.empty:
-                continue
-            kw = dict(color=st["color"], marker=st["marker"], markersize=5,
-                      markeredgecolor="white", markeredgewidth=0.8, label=st["label"], zorder=2 if c == "random" else 3)
-            if c == "merge":
-                ax.plot(g.budget * 100, g[m], linestyle="none", markersize=8, **{k: v for k, v in kw.items() if k != "markersize"})
-            else:
-                ax.plot(g.budget * 100, g[m], linewidth=1.6, **kw)
-        ax.set_xscale("log")
-        ax.set_xticks([1, 2, 5, 10, 25]); ax.set_xticklabels(["1", "2", "5", "10", "25"])
-        ax.set_xlabel("Gaussians kept (%)", fontsize=8, color=TEXT)
-        ax.set_ylabel(ylab, fontsize=8, color=TEXT)
-        style_axes(ax)
-    h, l = axes[0].get_legend_handles_labels()
-    fig.legend(h, l, loc="lower center", ncol=4, fontsize=7, frameon=False, bbox_to_anchor=(0.5, -0.02))
-    fig.tight_layout(rect=(0, 0.14, 1, 1))
+    fig, ax = plt.subplots(figsize=(4.6, 3.3))
+    ax.axhline(full["psnr"], color=MUTED, linewidth=1, linestyle="--", zorder=1)
+    ax.text(1, full["psnr"], " all 16,384 Gaussians", color=MUTED, fontsize=7, va="bottom", ha="left")
+    for c, st in STYLE.items():
+        if c in exclude:
+            continue
+        g = s[s.criterion == c].sort_values("budget")
+        g = g[g.budget < 1.0]
+        if g.empty:
+            continue
+        kw = dict(color=st["color"], marker=st["marker"], markersize=5,
+                  markeredgecolor="white", markeredgewidth=0.8, label=st["label"], zorder=2 if c == "random" else 3)
+        if c == "merge":
+            ax.plot(g.budget * 100, g["psnr"], linestyle="none", markersize=8, **{k: v for k, v in kw.items() if k != "markersize"})
+        else:
+            ax.plot(g.budget * 100, g["psnr"], linewidth=1.6, **kw)
+    ax.set_xscale("log")
+    ax.set_xticks([1, 2, 5, 10, 25]); ax.set_xticklabels(["1", "2", "5", "10", "25"])
+    ax.set_xlabel("Gaussians kept (%)", fontsize=8, color=TEXT)
+    ax.set_ylabel("PSNR (dB) ↑", fontsize=8, color=TEXT)
+    style_axes(ax)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=7, frameon=False)
+    fig.tight_layout()
     for ext in ("pdf", "png"):
         fig.savefig(f"{path}.{ext}", dpi=200, bbox_inches="tight")
     plt.close(fig)
