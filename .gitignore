@@ -2,6 +2,9 @@ __pycache__
 */__pycache__
 experiments_out
 configs/hydra/cluster.yaml
+
+# Job outputs, checkpoints, logs and local results are not tracked.
+# ======================================================================
 out/
 err/
 wandb/
@@ -12,3 +15,4 @@ outputs/
 .DS_Store
 results/
 logs/
+# ======================================================================

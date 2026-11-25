@@ -1,3 +1,4 @@
+# entirely new code file from Taya
 """
 Level 3 (budget-aware fine-tuning) and Level 3b (viewpoint-robust fine-tuning) of Splatter Image.
 
@@ -92,13 +93,17 @@ def apply_mask(recon, rgb, a, head, head_inputs, keep=None, mask=None):
     if mask == "learned":
         logits = head(imp.ImportanceHead.make_input(rgb, orig, inputs=head_inputs))
         m = imp.straight_through_topk_mask(logits, keep, tau=a.tau)
-    else:  # hybrid: hard mask, no gradient through the selection; the reconstructor adapts to it
+    else:  # hybrid / random: hard mask, no gradient through the selection; the reconstructor adapts to it
         B, N = orig["opacity"].shape[:2]
         k = max(1, int(round(keep * N)))
         m = torch.zeros(B, N, device=rgb.device)
         for b in range(B):
-            pc = {kk: v[b].detach() for kk, v in orig.items()}
-            m[b, imp.topk_indices(imp.cheap_scores(pc, "hybrid"), k)] = 1.0
+            if mask == "random":   # ablation: content-independent selection, a new random subset every step
+                idx = torch.randperm(N, device=rgb.device)[:k]
+            else:
+                pc = {kk: v[b].detach() for kk, v in orig.items()}
+                idx = imp.topk_indices(imp.cheap_scores(pc, "hybrid"), k)
+            m[b, idx] = 1.0
     if sym:
         m = torch.cat([m, m], dim=1)          # twin of i sits at n_orig + i
     out = dict(recon)
@@ -155,7 +160,10 @@ def build_val_cache(cfg, a, device):
     for vd in loader:
         F = vd["gt_images"].shape[1]
         ids = [0] + list(range(1, F))[1::10]                 # input view + 25 spread-out novel views
-        cache.append({k: v[:, ids].to(device) for k, v in vd.items()})
+        # slice only per-view tensors (B, F, ...); keep per-object fields as they are
+        # (e.g. the symmetry branch's dataset also returns a per-object plane, shape (B, 4))
+        cache.append({k: (v[:, ids] if torch.is_tensor(v) and v.dim() >= 2 and v.shape[1] == F else v).to(device)
+                      for k, v in vd.items()})
     return cache
 
 
@@ -361,7 +369,7 @@ def main(a):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--mask", choices=["none", "learned", "hybrid"], default="none")
+    p.add_argument("--mask", choices=["none", "learned", "hybrid", "random"], default="none")
     p.add_argument("--sparsity_l1", type=float, default=0.0, help="soft sparsity baseline: + lambda * mean opacity")
     p.add_argument("--val_mask", choices=["none", "hybrid"], default="none",
                    help="with --mask none: validate after post-hoc pruning with this rule at --keep")

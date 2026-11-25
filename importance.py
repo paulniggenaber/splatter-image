@@ -1,3 +1,4 @@
+# entirely new code file from Taya
 """
 Gaussian importance scores, selection criteria and budget-aware masking for Splatter Image.
 

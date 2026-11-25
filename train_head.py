@@ -1,3 +1,4 @@
+# entirely new code file from Taya
 """
 Level 2: train a tiny importance head on top of the FROZEN Splatter Image to imitate an
 expensive multi-view oracle (knowledge distillation of a ranking).
