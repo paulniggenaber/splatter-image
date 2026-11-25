@@ -1,3 +1,15 @@
+# Lazy imports: each dataset module is imported only when it is used (was: all at the top).
+# ======================================================================
+# The CO3D, NMR, Objaverse and GSO loaders need extra packages and data that the SRN experiments
+# do not use; importing them all at the top made every SRN run fail when they were missing.
+# Was:
+#   from .srn import SRNDataset
+#   from .co3d import CO3DDataset
+#   from .nmr import NMRDataset
+#   from .objaverse import ObjaverseDataset
+#   from .gso import GSODataset
+# ======================================================================
+
 def get_dataset(cfg, name):
     category = cfg.data.category
 
@@ -21,5 +33,8 @@ def get_dataset(cfg, name):
         from .gso import GSODataset
         return GSODataset(cfg, name)
 
+    # Fail loudly on an unknown category (the original silently returned None).
+    # ======================================================================
     else:
         raise ValueError(f"Unknown dataset category: {category}")
+    # ======================================================================

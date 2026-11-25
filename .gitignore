@@ -1,5 +1,10 @@
 __pycache__
 */__pycache__
 experiments_out
-configs/hydra/cluster.yamlresults/
+configs/hydra/cluster.yaml
+
+# Job outputs and local results are not tracked.
+# ======================================================================
+results/
 logs/
+# ======================================================================
