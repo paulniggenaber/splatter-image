@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Quick check that a batch job can use the GPU and the built renderer.
 # Run from the repo root: mkdir -p out err && sbatch slurm/check.sh
 #SBATCH --job-name=check

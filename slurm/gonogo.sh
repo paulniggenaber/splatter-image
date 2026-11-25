@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Go/no-go check for the symmetry idea, no training involved.
 # Released cars model, first N test cars, three ways:
 #   model        = the released model as it is

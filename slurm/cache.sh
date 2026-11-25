@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Fill the SRN disk cache (one file per car). CPU only, no GPU needed.
 # Without the cache every training job spends about 2 hours re-reading 250,000
 # small files from the network drive before it trains at full speed.

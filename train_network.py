@@ -1,7 +1,10 @@
 import glob
 import hydra
 import os
+# Time module, used to measure the training speed for the log.
+# ======================================================================
 import time
+# ======================================================================
 import wandb
 
 import numpy as np
@@ -19,8 +22,11 @@ import lpips as lpips_lib
 
 from eval import evaluate_dataset
 from gaussian_renderer import render_predicted
+# Import symmetry on/off check, plane loss and plane errors for training.
+# ======================================================================
 from scene.gaussian_predictor import GaussianSplatPredictor, symmetry_enabled
 from scene.symmetry import plane_loss, plane_errors
+# ======================================================================
 from datasets.dataset_factory import get_dataset
 
 
@@ -60,6 +66,8 @@ def main(cfg: DictConfig):
     gaussian_predictor = GaussianSplatPredictor(cfg)
     gaussian_predictor = gaussian_predictor.to(memory_format=torch.channels_last)
 
+    # Optimizer groups: the new symmetry heads get their own learning rate.
+    # ======================================================================
     use_symmetry = symmetry_enabled(cfg)
 
     l = []
@@ -74,6 +82,7 @@ def main(cfg: DictConfig):
          'lr': cfg.opt.sym_lr})
     elif cfg.model.network_with_offset:
         l.append({'params': gaussian_predictor.network_with_offset.parameters(),
+    # ======================================================================
          'lr': cfg.opt.base_lr})
     if cfg.model.network_without_offset:
         l.append({'params': gaussian_predictor.network_wo_offset.parameters(), 
@@ -94,6 +103,8 @@ def main(cfg: DictConfig):
                                                 strict=False)
                 print("Warning, model mismatch - was this expected?")
             first_iter = checkpoint["iteration"]
+            # On resume, also restore the Adam optimizer state from the checkpoint.
+            # ======================================================================
             best_PSNR = checkpoint["best_PSNR"]
             # Also continue with the saved optimizer state. Without it Adam starts
             # cold after every resubmitted job, which disturbs the weights for a while.
@@ -102,6 +113,7 @@ def main(cfg: DictConfig):
                 print("Restored the optimizer state")
             except (KeyError, ValueError) as e:
                 print("Could not restore the optimizer state, starting it fresh:", e)
+            # ======================================================================
             print('Loaded model')
         # Resuming from checkpoint
         elif cfg.opt.pretrained_ckpt is not None:
@@ -113,9 +125,12 @@ def main(cfg: DictConfig):
             except RuntimeError:
                 gaussian_predictor.load_state_dict(checkpoint["model_state_dict"],
                                                 strict=False)
+            # Fine-tuning from a pretrained model: optionally reset best PSNR to zero.
+            # ======================================================================
             best_PSNR = checkpoint.get("best_PSNR", 0.0)
             if cfg.opt.get("reset_best_psnr", True):
                 best_PSNR = 0.0
+            # ======================================================================
             print('Loaded model from a pretrained checkpoint')
         else:
             best_PSNR = 0.0
@@ -172,6 +187,8 @@ def main(cfg: DictConfig):
     gaussian_predictor, optimizer = fabric.setup(
         gaussian_predictor, optimizer
     )
+    # Move the restored Adam optimizer state onto the GPU, next to parameters.
+    # ======================================================================
     # A restored Adam state was loaded while the model was still on the CPU. Move it
     # to the GPU, next to its parameters (found when testing resume: "two devices").
     for group in optimizer.param_groups:
@@ -179,6 +196,7 @@ def main(cfg: DictConfig):
             for key, value in optimizer.state.get(p, {}).items():
                 if torch.is_tensor(value):
                     optimizer.state[p][key] = value.to(p.device)
+    # ======================================================================
     dataloader = fabric.setup_dataloaders(dataloader)
     
     gaussian_predictor.train()
@@ -186,8 +204,11 @@ def main(cfg: DictConfig):
     print("Beginning training")
     first_iter += 1
     iteration = first_iter
+    # State for the compact log line and the plane-angle running mean.
+    # ======================================================================
     last_log_time = None
     plane_angle_ema = None   # running mean of the predicted plane angle error (for plane_gate_deg)
+    # ======================================================================
 
     for num_epoch in range((cfg.opt.iterations + 1 - first_iter)// len(dataloader) + 1):
         dataloader.sampler.set_epoch(num_epoch)        
@@ -209,6 +230,8 @@ def main(cfg: DictConfig):
                 focals_pixels_pred = None
                 input_images = data["gt_images"][:, :cfg.data.input_images, ...]
 
+            # Warm-up: use the true mirror plane until the plane head is accurate.
+            # ======================================================================
             sym_kwargs = {}
             gate = float(cfg.model.symmetry.get("plane_gate_deg", 0.0)) if use_symmetry else 0.0
             plane_not_ready = gate > 0 and (plane_angle_ema is None or plane_angle_ema > gate)
@@ -217,11 +240,15 @@ def main(cfg: DictConfig):
                 # step one while the plane head learns from the plane loss alone
                 sym_kwargs["sym_plane_override"] = data["sym_plane"]
 
+            # ======================================================================
             gaussian_splats = gaussian_predictor(input_images,
                                                 data["view_to_world_transforms"][:, :cfg.data.input_images, ...],
                                                 rot_transform_quats,
+                                                # Pass the symmetry keyword arguments (e.g. true plane) into the model.
+                                                # ======================================================================
                                                 focals_pixels_pred,
                                                 **sym_kwargs)
+                                                # ======================================================================
 
 
             if cfg.data.category == "hydrants" or cfg.data.category == "teddybears":
@@ -280,6 +307,8 @@ def main(cfg: DictConfig):
             if cfg.data.category == "hydrants" or cfg.data.category == "teddybears":
                 total_loss = total_loss + big_gaussian_reg_loss + small_gaussian_reg_loss
 
+            # Add the plane loss, weighted by lambda_plane, to the total loss.
+            # ======================================================================
             if use_symmetry:
                 # teach the plane head where the true mirror plane is
                 plane_loss_value = plane_loss(gaussian_splats["sym_plane"], data["sym_plane"])
@@ -288,6 +317,7 @@ def main(cfg: DictConfig):
                     plane_angle_ema = a_now if plane_angle_ema is None else 0.98 * plane_angle_ema + 0.02 * a_now
                 total_loss = total_loss + cfg.opt.lambda_plane * plane_loss_value
 
+            # ======================================================================
             assert not total_loss.isnan(), "Found NaN loss!"
             print("finished forward {} on process {}".format(iteration, fabric.global_rank))
             fabric.backward(total_loss)
@@ -306,6 +336,8 @@ def main(cfg: DictConfig):
 
             # ========= Logging =============
             with torch.no_grad():
+                # Every 50 steps: one compact log line, symmetry values sent to wandb.
+                # ======================================================================
                 if iteration % 50 == 0 and fabric.is_global_zero:
                     # one compact line every 50 steps: loss and speed
                     now = time.time()
@@ -334,6 +366,7 @@ def main(cfg: DictConfig):
                                    "sym_switch_mean": gaussian_splats["sym_switch"].mean().item(),
                                    "sym_uses_true_plane": float("sym_plane_override" in sym_kwargs)},
                                   step=iteration)
+                # ======================================================================
                     if cfg.opt.lambda_lpips != 0:
                         wandb.log({"training_l12_loss": np.log10(l12_loss_sum.item() + 1e-8)}, step=iteration)
                         wandb.log({"training_lpips_loss": np.log10(lpips_loss_sum.item() + 1e-8)}, step=iteration)
@@ -427,10 +460,13 @@ def main(cfg: DictConfig):
                 # save models - if the newest psnr is better than the best one,
                 # overwrite best_model. Always overwrite the latest model. 
                 if scores["PSNR_novel"] > best_PSNR:
+                    # Save model_best.pth only if logging.save_best is set (disk quota).
+                    # ======================================================================
                     if cfg.logging.get("save_best", False):
                         # off by default: eval.py and resuming only use model_latest.pth,
                         # and every copy costs 0.68 GB of the 50 GB quota
                         fnames_to_save.append("model_best.pth")
+                    # ======================================================================
                     best_PSNR = scores["PSNR_novel"]
                     print("\n[ITER {}] Saving new best checkpoint PSNR:{:.2f}".format(
                         iteration + 1, best_PSNR))
@@ -448,6 +484,8 @@ def main(cfg: DictConfig):
                     ckpt_save_dict["model_state_dict"] = ema.ema_model.state_dict()                  
                 else:
                     ckpt_save_dict["model_state_dict"] = gaussian_predictor.state_dict() 
+                # Atomic checkpoint save: write a temporary file, then replace the old.
+                # ======================================================================
                 # write to a temporary file first, then swap it in: if the disk is full
                 # the save fails, but the previous checkpoint stays intact
                 final_path = os.path.join(vis_dir, fname_to_save)
@@ -459,6 +497,7 @@ def main(cfg: DictConfig):
                     print("Checkpoint {} NOT saved ({}); the previous one is kept".format(fname_to_save, e), flush=True)
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
+                # ======================================================================
 
             gaussian_predictor.train()
 

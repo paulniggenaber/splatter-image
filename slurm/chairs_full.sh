@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Run on the cluster LOGIN node (needs internet), not as a job:
 #   ssh hpc 'bash -s' < slurm/chairs_full.sh
 # Downloads the SRN chairs zip again (3.9 GB), extracts ALL 4085 training chairs

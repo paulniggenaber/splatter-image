@@ -1,3 +1,5 @@
+# entirely new code file from Paul
+# ======================================================================
 """
 Symmetry extension for Splatter Image.
 
@@ -161,3 +163,4 @@ def is_hidden_side_camera(camera_center, plane):
     n, d = split_plane(plane.unsqueeze(0))
     s = (n[0] * camera_center).sum() - d[0, 0]
     return bool((s * d[0, 0]) > 0)
+# ======================================================================

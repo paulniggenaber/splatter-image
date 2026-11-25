@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Test car 375 (876d92ce6a0e4bf399588eee976baae) has only blank white images.
 # 1) Score every cars model/mode on that car alone, so it can be subtracted from the 704-car means.
 # 2) Re-evaluate pure mirroring (predicted plane) on the other 703 cars: its car-375 PSNR is infinite.

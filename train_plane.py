@@ -1,3 +1,4 @@
+# entirely new code file from Paul
 """
 Train the stand-alone mirror-plane predictor (scene/plane_predictor.py).
 

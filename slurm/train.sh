@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Fine-tune the released cars model, with or without the symmetry extension.
 #
 # Run from the repo root:

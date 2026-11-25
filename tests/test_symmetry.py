@@ -1,3 +1,4 @@
+# entirely new code file from Paul
 """
 Test A of the symmetry plan: the mirror maths, on a CPU.
 

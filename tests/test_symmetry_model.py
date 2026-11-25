@@ -1,3 +1,4 @@
+# entirely new code file from Paul
 """
 Checks the symmetry model end to end on a CPU (no renderer needed):
   - the released weights load into the symmetry model, only the new heads are missing

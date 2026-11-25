@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Evaluate a trained run on the test cars, with near-side / hidden-side scores.
 #     sbatch --export=ALL,RUN_DIR=$PWD/experiments_out/sym,MODES="model oracle" slurm/eval.sh
 #     sbatch --export=ALL,RUN_DIR=$PWD/experiments_out/control slurm/eval.sh

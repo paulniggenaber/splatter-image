@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Test C: short smoke runs of the training loop, symmetry and control.
 # Small data subset, and validation / video / checkpoint every 100 steps, so
 # every code path of a real run is exercised once. Prints s/it and GPU memory.

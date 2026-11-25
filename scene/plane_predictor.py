@@ -1,3 +1,4 @@
+# entirely new code file from Paul
 """
 Stand-alone mirror-plane predictor: one photo in, the object's mirror plane out.
 

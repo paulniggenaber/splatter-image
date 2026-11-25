@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Cache all SRN training chairs in chunks and free the raw images of every cached chair.
 # Run on the login node:  ssh hpc 'bash -s' < slurm/cache_chairs_full.sh
 #

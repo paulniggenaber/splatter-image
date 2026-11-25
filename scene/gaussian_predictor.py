@@ -10,7 +10,10 @@ from einops import rearrange, repeat
 
 from utils.general_utils import matrix_to_quaternion, quaternion_raw_multiply
 from utils.graphics_utils import fov2focal
+# Import symmetry helpers: mirror the Gaussians, mask the near-side cameras.
+# ======================================================================
 from scene.symmetry import mirror_gaussians, near_side_mask
+# ======================================================================
 
 # U-Net implementation from EDM
 # Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -379,9 +382,12 @@ class SongUNet(nn.Module):
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, init_weight=0.2, **init)# init_zero)
 
+    # New return_features flag: also return the last decoder feature map.
+    # ======================================================================
     def forward(self, x, film_camera_emb=None, N_views_xa=1, return_features=False):
         # return_features=True also returns the last decoder feature map
         # (B, model_channels, H, W). Used by the symmetry heads.
+        # ======================================================================
 
         emb = None
 
@@ -426,8 +432,11 @@ class SongUNet(nn.Module):
                     # but it's not good for gradient flow and background features
                     x = torch.cat([x, skips.pop()], dim=1)
                 x = block(x, emb=emb, N_views_xa=N_views_xa)
+        # Return the 128-channel feature map next to the output if requested.
+        # ======================================================================
         if return_features:
             return aux, x
+            # ======================================================================
         return aux
 
 # ================== End of implementation taken from EDM ===============
@@ -466,6 +475,8 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
+        # Twin head and plane head: predict switch, colour fix, mirror plane.
+        # ======================================================================
         # ---- Symmetry extension: two small extra heads -------------------
         # They read the last decoder feature map (base_dim channels), not the
         # 24 output channels, so the pretrained layers keep their shapes and
@@ -555,6 +566,7 @@ def symmetry_enabled(cfg):
     # Configs of the released models have no model.symmetry entry -> off.
     sym_cfg = cfg.model.get("symmetry", None)
     return sym_cfg is not None and bool(sym_cfg.enabled)
+    # ======================================================================
 
 def networkCallBack(cfg, name, out_channels, **kwargs):
     if name == "SingleUNet":
@@ -566,7 +578,10 @@ class GaussianSplatPredictor(nn.Module):
     def __init__(self, cfg):
         super(GaussianSplatPredictor, self).__init__()
         self.cfg = cfg
+        # Remember whether the symmetry extension is switched on in the config.
+        # ======================================================================
         self.symmetry = symmetry_enabled(cfg)
+        # ======================================================================
         assert cfg.model.network_with_offset or cfg.model.network_without_offset, \
             "Need at least one network"
 
@@ -775,6 +790,8 @@ class GaussianSplatPredictor(nn.Module):
                 source_cameras_view_to_world, 
                 source_cv2wT_quat=None,
                 focals_pixels=None,
+                # New forward arguments: override plane or switch, turn colour fix off.
+                # ======================================================================
                 activate_output=True,
                 sym_plane_override=None,
                 sym_switch_override=None,
@@ -783,6 +800,7 @@ class GaussianSplatPredictor(nn.Module):
         # sym_plane_override (B, 4): mirror with this plane instead of the predicted
         #   one (true plane during warm-up, or "oracle plane" evaluation).
         # sym_switch_override (float): force the switch to this value (tests).
+        # ======================================================================
 
         B = x.shape[0]
         N_views = x.shape[1]
@@ -821,8 +839,11 @@ class GaussianSplatPredictor(nn.Module):
                                                              film_camera_emb=film_camera_emb,
                                                              N_views_xa=N_views_xa
                                                              )
+            # Unpack the twin-head output and the predicted plane from the network.
+            # ======================================================================
             if self.symmetry:
                 split_network_outputs, sym_out, sym_plane_pred = split_network_outputs
+                # ======================================================================
 
             split_network_outputs = split_network_outputs.split(self.split_dimensions_with_offset, dim=1)
             depth, offset, opacity, scaling, rotation, features_dc = split_network_outputs[:6]
@@ -890,6 +911,8 @@ class GaussianSplatPredictor(nn.Module):
 
         out_dict = self.multi_view_union(out_dict, B, N_views)
 
+        # Mirror step: add one mirrored twin for every Gaussian (N -> 2N).
+        # ======================================================================
         if self.symmetry:
             # Symmetry extension: add a mirrored twin for every Gaussian (N -> 2N).
             # With one input view the Gaussians are in the frame of the input
@@ -925,6 +948,7 @@ class GaussianSplatPredictor(nn.Module):
                 out_dict["sym_keep_far"] = keep_far      # added after mirroring (mirror_gaussians keeps only Gaussian keys)
             out_dict["sym_plane"] = sym_plane_pred       # (B, 4), for the plane loss
             out_dict["sym_switch"] = switch              # (B, N, 1), for logging / pictures
+            # ======================================================================
 
         out_dict = self.make_contiguous(out_dict)
 

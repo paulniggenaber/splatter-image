@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Pilot: a short fine-tune (default 2000 steps on 400 training cars) followed by
 # an evaluation on the first 100 test cars. Fits in one hour. It is NOT the real
 # run; it only shows which way the numbers move.

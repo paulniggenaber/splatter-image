@@ -1,3 +1,4 @@
+# entirely new code file from Paul
 """
 Test of the stand-alone plane predictor (CPU, a few seconds).
 Run from the repo root:  python -m tests.test_plane_predictor

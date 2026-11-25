@@ -1,4 +1,5 @@
 #!/bin/bash
+# entirely new code file from Paul
 # Train the stand-alone mirror-plane predictor on the cached SRN cars and score it on
 # validation cars and on test cars at the benchmark input view.
 # Run from the repo root:  mkdir -p out err && sbatch slurm/plane.sh

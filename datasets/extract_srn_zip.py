@@ -1,3 +1,4 @@
+# entirely new code file from Paul
 """
 Extract part of an SRN zip (srn_chairs.zip) into the folder layout the dataset class
 expects:  <root>/srn_chairs/chairs_{train,val,test}/<object id>/{rgb,pose,intrinsics.txt}.
